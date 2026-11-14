@@ -476,7 +476,9 @@ internal sealed class ColumnGraph : FrameworkElement
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e) { base.OnMouseLeftButtonUp(e); if (_button) { e.Handled = true; Clicked?.Invoke(); } }
 }
 
-// One wide column, as ftop draws the GPU beside the cores: the fill is usage, the line its memory in use against its size.
+// One wide column, as ftop draws the GPU beside the cores: the fill is usage, the line its memory in use against its size, which
+// is also written at the top ("显存 18%", or the share alone where the column is too narrow for the words, or nothing where it is too short),
+// so the memory shows without pointing at the block.
 internal sealed class BlockGauge : FrameworkElement
 {
     // The look of the panel this element is drawn in (PanelLook.Of); the main look outside a panel.
@@ -485,9 +487,16 @@ internal sealed class BlockGauge : FrameworkElement
     private Eased _value, _tick, _hover = new(0, Eased.Hover);
     private bool _hasTick, _hasValue;
     private readonly string _action;
+    // The memory line's words, in full and the share alone, and the caption's size (0: no words).
+    private readonly double _caption;
+    private string _label = "", _short = "";
+    private readonly DrawingCache<(string, string, double, double, double, string)> _words = new();
     public event Action? Clicked;
 
-    public BlockGauge(string color, string button) { _color = color; _action = button; Cursor = Cursors.Hand; AutomationProperties.SetName(this, button); SnapsToDevicePixels = true; }
+    public BlockGauge(string color, string button, double caption = 0)
+    {
+        _color = color; _action = button; _caption = caption; Cursor = Cursors.Hand; AutomationProperties.SetName(this, button); SnapsToDevicePixels = true;
+    }
 
     protected override AutomationPeer OnCreateAutomationPeer() => new DrawnPeer(this, AutomationControlType.Button, Spoken, () => Clicked?.Invoke());
     // For screen readers, named as the block it is, with the memory its line shows, so it never reads the same as the small GPU figure beside the main
@@ -503,6 +512,8 @@ internal sealed class BlockGauge : FrameworkElement
         bool moving = _value.Set(value ?? 0, motion);
         if (tick is { } t) moving |= _tick.Set(t, motion && _hasTick);
         _hasTick = tick is not null;
+        _short = tick is { } share ? MonitorFormat.Percent(share) + "%" : "";
+        _label = tick is null ? "" : Loc.T("显存 ", "VRAM ") + _short;
         if (moving) Motion.Start(this, Step); else InvalidateVisual();
     }
     private bool Step(double now) { InvalidateVisual(); return _value.Moving(now) || _tick.Moving(now) || _hover.Moving(now); }
@@ -520,6 +531,16 @@ internal sealed class BlockGauge : FrameworkElement
         if (hover > .01) { drawing.PushOpacity(hover); drawing.DrawRoundedRectangle(UI.Brush(Look.Hex("hover")), null, box, radius, radius); drawing.Pop(); }
         double fill = Math.Max(3, Math.Clamp(_value.At(now), 0, 1) * h);
         drawing.DrawRoundedRectangle(UI.Brush(_color), null, new Rect(0, h - fill, w, fill), radius, radius);
+        if (_label.Length > 0 && _caption > 0 && h >= _caption * 3 + 8)
+        {
+            double ppd = MonitorDraw.PixelsPerDip(this);
+            drawing.DrawDrawing(_words.Get((_label, _short, w, _caption, ppd, Look.Secondary), context =>
+            {
+                var text = MonitorDraw.Text(_label, _caption, Look.Secondary, ppd);
+                if (text.WidthIncludingTrailingWhitespace > w - 6) text = MonitorDraw.Text(_short, _caption, Look.Secondary, ppd);
+                if (text.WidthIncludingTrailingWhitespace <= w - 6) MonitorDraw.Baseline(context, text, Math.Round((w - text.Width) / 2), Math.Round(4 + text.Baseline));
+            }));
+        }
         if (!_hasTick || w < 10) return;
         var pen = new Pen(UI.Brush(Look.Current["textPrimary"].WithAlpha(0xB3).ToString()), 1.6); pen.Freeze();
         double y = Math.Round((1 - Math.Clamp(_tick.At(now), 0, 1)) * (h - 2)) + 1;
