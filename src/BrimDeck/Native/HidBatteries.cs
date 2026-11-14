@@ -749,9 +749,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private static IEnumerable<DeviceBattery> Vgn(HidInfo info, HashSet<string> claimed)
     {
         using var device = new HidDevice(info);
-        bool v108 = info.Vendor == Dongles.VgnV108Vendor && info.Product == Dongles.VgnV108Receiver;
-        var read = Hid.Transact<object>([device], () => device.Write(v108 ? Dongles.VgnV108Request() : Dongles.VgnRequest()),
-            r => (v108 ? Dongles.VgnV108Battery(r) : Dongles.VgnBattery(r)) is { } b ? b : null, 500);
+        var read = Hid.Transact<object>([device], () => device.Write(Dongles.VgnRequest()), r => Dongles.VgnBattery(r) is { } b ? b : null, 500);
         if (read is not BatteryRead battery) return [];
         claimed.Add(info.Path);
         bool atk = info.Vendor == Dongles.AtkVendor;

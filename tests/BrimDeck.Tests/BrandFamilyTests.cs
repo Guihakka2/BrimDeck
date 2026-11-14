@@ -11,7 +11,29 @@ static class BrandFamilyTests
     {
         Rules(check);
         Betop(check);
+        VgnV108(check);
     }
+
+    // Pull request #278's capture: 100 % on the receiver (byte 6 = 01: full, off the cable).
+    private static void VgnV108(Action<string, bool> check)
+    {
+        var reply = Bytes("13 4A 01 00 02 64 01 00 00 00 00 00 00 00 00 00 00 00 00 C5");
+        var charging = Bytes("13 4A 01 00 02 32 10 00 00 00 00 00 00 00 00 00 00 00 00 A2");
+        check("VGN V108: the request with its sum, the captured 100 % answer, a charging state, a wrong sum and a level over 100 are none",
+            BrimDeck.Core.VgnV108.Request().SequenceEqual(Bytes("13 4A 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 5E"))
+            && BrimDeck.Core.VgnV108.Battery(reply) == new BatteryRead(100) && BrimDeck.Core.VgnV108.Battery(charging) == new BatteryRead(50, true)
+            && BrimDeck.Core.VgnV108.Battery([.. reply[..^1], 0]) is null
+            && BrimDeck.Core.VgnV108.Battery(Bytes("13 4A 01 00 02 65 01 00 00 00 00 00 00 00 00 00 00 00 00 C6")) is null
+            && BrimDeck.Core.VgnV108.Battery(BrimDeck.Core.VgnV108.Request()) is null);
+        check("VGN V108: only interface 1 of 391D:2A02, with 20-byte reports and report 0x13 declared",
+            BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 25, 20, outputIds: [0x13])) is { Family.Brand: "VGN V108", Ways.Count: 1 }
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 0, 8, 1, outputIds: [0x00])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 19, 20, outputIds: [0x13])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 25, 20, outputIds: [0x01])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A05, 0xFF00, 0x0001, 1, 25, 20, outputIds: [0x13])) is not { Family.Brand: "VGN V108" });
+    }
+
+    private static byte[] Bytes(string hex) => Convert.FromHexString(hex.Replace(" ", ""));
 
     // What every family must keep: unique brands and read names (they are kept on disk), names under the brand's prefix, and
     // never a standard collection (mouse, keyboard, consumer, system control) asked.
