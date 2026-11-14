@@ -66,7 +66,7 @@ public sealed partial class SettingsWindow
         note.TextWrapping = TextWrapping.Wrap; note.Margin = margin; _content.Children.Add(note);
     }
 
-    // Three cards to a row, each the collapsed capsule in that theme. A user's own theme can be renamed by clicking its name and
+    // Three cards to a row, each the collapsed capsule and a corner of the open panel in that theme. A user's own theme can be renamed by clicking its name and
     // carries a delete button on its preview (OwnThemeCard), and the custom section ends with the new-theme card (tile).
     private void ThemeCards(IReadOnlyList<(string Id, string Name, PanelThemeInfo Theme)> themes, string chosen, FrameworkElement? tile = null)
     {
@@ -115,7 +115,7 @@ public sealed partial class SettingsWindow
             if (kept.Preview.Parent is ContentControl previous) previous.Content = null;
             return kept.Preview;
         }
-        // The collapsed capsule with its quota rings and clock, at its real size, in this theme's colors.
+        // The collapsed capsule with its quota rings and clock, at its real size, and a corner of the open panel, in this theme's colors.
         var preview = CompactStylePreview.Theme(palette);
         _themePreviews[key] = (palette, preview);
         return preview;
