@@ -31,13 +31,17 @@ static class BrandFamilyTests
 
     private static void Betop(Action<string, bool> check)
     {
-        var receiver = Shape(0x20BC, 0x5073, 0xFF00, 3, 1, outputIds: [0x02]);
+        var receiver = Shape(0x20BC, 0x5073, 0x00FF, 3, 1, outputIds: [0x02]);
         var found = BrandFamilies.Find(receiver);
-        check("BETOP: any 20BC receiver's vendor collection (the Kunpeng 70's id is not known) takes the status read",
+        check("BETOP: any 20BC receiver's vendor collection (the Kunpeng 70's id is not known) takes the status read, its page as Windows reports it or as written",
             found is { Family.Brand: "BETOP" } && found.Value.Ways.Select(way => way.Name).SequenceEqual(["betop.status"])
-            && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x0001, 5)) is null && BrandFamilies.Find(Shape(0x20BD, 0x5191, 0xFF00, 3, outputIds: [0x02])) is null);
+            && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0xFF00, 3, 1, outputIds: [0x02])) is { Ways.Count: 1 }
+            && BrandFamilies.Find(Shape(0x20BD, 0x5191, 0x00FF, 3, outputIds: [0x02])) is null);
+        check("BETOP: never the receiver's mouse, keyboard or gamepad collections, nor another usage on its vendor page",
+            BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x0001, 2, outputIds: [0x02])) is null && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x0001, 6, outputIds: [0x02])) is null
+            && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x0001, 5, outputIds: [0x02])) is null && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x00FF, 1, outputIds: [0x02])) is null);
         check("BETOP: not sent where the collection declares no report 0x02",
-            BrandFamilies.Find(Shape(0x20BC, 0x5191, 0xFF00, 3, outputIds: [0x01])) is { Ways.Count: 0 });
+            BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x00FF, 3, outputIds: [0x01])) is { Ways.Count: 0 });
         check("BETOP: the request, a reading on battery and one charging (the Kunpeng 20's capture), and the request read back is none",
             BrimDeck.Core.Betop.Request().SequenceEqual(new byte[] { 0x02, 0x15 })
             && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x64, 0x00, 0x51, 0x01, 0x01, 0x00]) == new BatteryRead(100, true)
