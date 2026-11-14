@@ -746,8 +746,8 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         raise.BorderBrush = UI.Brush(_palette.Border);
         raise.Background = UI.Brush(_palette.Input);
         keep.Children.Add(Toggle(Loc.T("持续置顶", "Keep on top"), S.ForceTopmost, value => Change(s => s.ForceTopmost = value), help:
-            Loc.T("开启后，面板被其他置顶窗口遮挡时，被遮挡的部分仍显示在最上方，可以正常操作，不与对方反复争夺位置。其他应用打开的菜单除外。仍遵循上面的显示与隐藏规则。",
-                "The part of the panel another always-on-top window covers still shows on top and works as usual, without fighting that window for the top. Menus other apps open are excepted. Display and hide rules above still apply.")));
+            Loc.T("开启后，面板被其他置顶窗口遮住时仍显示在最上方，可以正常操作。其他应用的菜单除外。",
+                "When on, the panel stays above other always-on-top windows and works as usual. Menus from other apps are excepted.")));
         keep.Children.Add(new Border { Height = 1, Background = UI.Brush(_palette.RowDivider) });
         var topRows = new StackPanel();
         topRows.Children.Add(keep);
