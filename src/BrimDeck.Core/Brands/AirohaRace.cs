@@ -5,13 +5,17 @@ namespace BrimDeck.Core;
 // the dongle; 0x00 would ask the dongle, which has no battery), then the frame 05 5A 03 00 D6 0C 00 (a request, 3 bytes of
 // body: command 0x0CD6 and the role 0). The dongle does not send the answer: input report 7 is fetched (HidD_GetInputReport),
 // laid out 07 <len> 80 <len bytes of frames>, every byte after the len valid ones being older reports' leftovers. The answer
-// is 05 5D 05 00 D6 0C 00 00 <percent> (status 0, role 0), usually in the same report as the acknowledgement 05 5B 03 00 D6 0C
-// <status>, which is no reading; nor is a report of len 0 (nothing new) nor a 0 (a headset just switched on reports 0 for a
-// moment). There is no charging state. Sources: HeadsetControl's audeze_maxwell_device.hpp (GPL; facts only: the report
-// layout and the battery command), HaloBattery's audeze.py and skullcandy.py (MIT; measured on Windows on a Maxwell dongle
+// is 05 5D 05 00 D6 0C 00 00 <percent> (status 0, role 0), usually in the same report after the acknowledgement 05 5B 03 00
+// D6 0C <status>, which is no reading (a status other than 0 is a refusal). The valid bytes can still hold older messages: a
+// result before the acknowledgement is an older one (vigil-watt), and the last result is the level (on link-up the headset
+// sends a falling run of results that ends on the level, Headroom), so the last result after the last acknowledgement is
+// taken. A report of len 0 (nothing new) is none, nor a 0 (a headset just switched on reports 0 for a moment). The protocol
+// has no charging state; a Maxwell on its cable is always charging (it cannot be switched off), so the cable's reading is
+// charging (HaloBattery). Sources: HeadsetControl's audeze_maxwell_device.hpp (GPL; facts only: the report layout, the
+// battery command and the refusal), HaloBattery's audeze.py and skullcandy.py (MIT; measured on Windows on a Maxwell dongle
 // 4B19, its cable 4B1A and an Xbox dongle 4B18, and a Skull-HQ capture of a PLYR dongle answering 70 %), Headroom's
-// headroom_race.py (MIT; the recipient byte, on a Crusher PLYR 720) and vigil-watt's docs/hardware/akg.md (MIT; an N9 Hybrid
-// on Windows answering 50 % and 100 %).
+// headroom_race.py (MIT; the recipient byte and the falling run, on a Crusher PLYR 720 on Linux) and vigil-watt's
+// docs/hardware/akg.md (MIT; an N9 Hybrid on Windows answering 50 % and 100 %).
 // - Audeze (0x3329, Audeze's own id, but only the products named: HaloBattery writes to no other): Maxwell dongle 4B19, Xbox
 //   dongle 4B18, cable 4B1A; Maxwell 2 4B29 and its Xbox dongle 4B28 (HeadsetControl, on interface 5). With no headset linked
 //   a Maxwell dongle names itself "... Dongle" ("Audeze Maxwell Dongle", "Audeze Maxwell XBOX Dongle") instead of "Audeze
@@ -32,17 +36,25 @@ public static class AirohaRace
     public static byte[] Request() => BrandFamilies.Frame(ReportLength, 0x06, 0x07, 0x80, 0x05, 0x5A, 0x03, 0x00, 0xD6, 0x0C, 0x00);
 
     private static readonly byte[] Result = [0x05, 0x5D, 0x05, 0x00, 0xD6, 0x0C, 0x00, 0x00];
+    private static readonly byte[] Ack = [0x05, 0x5B, 0x03, 0x00, 0xD6, 0x0C];
     public static BatteryRead? Battery(byte[] r)
     {
         if (r.Length < 3 || r[0] != ReplyId || r[2] != 0x80) return null;
         int length = r[1];
         if (length < Result.Length + 1 || length > ReportLength - 3 || 3 + length > r.Length) return null;
         var valid = r.AsSpan(3, length);
-        int at = valid.IndexOf(Result);
+        int ack = valid.LastIndexOf(Ack);
+        if (ack >= 0)
+        {
+            if (ack + Ack.Length < valid.Length && valid[ack + Ack.Length] != 0x00) return null;
+            valid = valid[(ack + Ack.Length)..];
+        }
+        int at = valid.LastIndexOf(Result);
         if (at < 0 || at + Result.Length >= valid.Length) return null;
         int percent = valid[at + Result.Length];
         return percent is > 0 and <= 100 ? new(percent) : null;
     }
+    public static BatteryRead? CableBattery(byte[] r) => Battery(r) is { } read ? read with { Charging = true } : null;
 
     private static bool Page(HidShape s, bool measured) => measured ? s.UsagePage == 0xFF13 : HeadsetPages.Is(s, 0xFF13);
     private static bool Collection(HidShape s, bool measured)
@@ -65,11 +77,12 @@ public static class AirohaRace
     // A dongle that says no headset is linked (its name ends in "Dongle"): the level it would give is the last one it held.
     public static bool NoHeadset(HidShape s) => s.Product != MaxwellCable && s.Name.Trim().EndsWith("Dongle", StringComparison.OrdinalIgnoreCase);
 
-    private static BrandWay Way(string name) => new(name, WayTransport.OutputGetInput, Request(), Battery) { ReplyId = ReplyId, GapMs = 50, TimeoutMs = 1000 };
+    private static BrandWay Way(string name, Func<byte[], BatteryRead?>? parse = null)
+        => new(name, WayTransport.OutputGetInput, Request(), parse ?? Battery) { ReplyId = ReplyId, GapMs = 50, TimeoutMs = 1000 };
 
     public static IEnumerable<BrandFamily> Families =>
     [
-        new("Audeze", TakesAudeze, s => NoHeadset(s) ? [] : [Way("audeze.race")])
+        new("Audeze", TakesAudeze, s => NoHeadset(s) ? [] : [Way("audeze.race", s.Product == MaxwellCable ? CableBattery : null)])
         {
             Kind = _ => DeviceKind.Headphones, Prefix = "audeze",
             DisplayName = s => s.Product is Maxwell2 or Maxwell2Xbox ? "Audeze Maxwell 2" : "Audeze Maxwell"

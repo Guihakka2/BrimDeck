@@ -135,13 +135,16 @@ static class BrandsGapTests
             && Hidpp.G535Battery(Bytes("10 FF 05 0C 0E E9 01"), 0xFF) is null && Hidpp.G535Battery(Bytes("10 FF 05 0D 00 00 01"), 0xFF) is null
             && Hidpp.G535Battery(Bytes("10 01 05 0D 0E E9 01"), 0xFF) is null);
         var centurion = Shape(0x046D, 0x0AF7, 0xFFA0, 1, 64, 64, [0x51]);
-        check("Logitech PRO X 2 LIGHTSPEED: the legacy request on its 0xFFA0 collection; 51 0B with 04 at 8, a power notice is none",
+        check("Logitech PRO X 2 LIGHTSPEED: the legacy request on its 0xFFA0 collection (the page as measured on Windows); 51 0B with 04 at 8; a power notice with 00 at 6 the headset off, any other notice, the acknowledgement and the request read back none",
             BrandFamilies.Find(centurion) is { Family.Brand: "Logitech Centurion", Ways.Count: 1 }
             && BrandFamilies.Find(Shape(0x046D, 0x0AF8, 0xFFA0, 1, 64, 64, [0x51])) is null && BrandFamilies.Find(Shape(0x046D, 0x0AF7, 0xFF00, 2, 64, 64, [0x51])) is null
+            && BrandFamilies.Find(Shape(0x046D, 0x0AF7, 0xA0FF, 1, 64, 64, [0x51])) is null
             && LogitechCenturion.Request().Take(10).SequenceEqual(Bytes("51 08 00 03 1A 00 03 00 04 0A")) && LogitechCenturion.Request().Length == 64
             && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 04 0A 2D 00 00")) == new BatteryRead(45)
             && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 04 0A 2B 00 02")) == new BatteryRead(43, true)
-            && LogitechCenturion.Battery(Bytes("51 05 00 03 1A 00 03 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 05 0A 2B 00 02")) is null);
+            && LogitechCenturion.Battery(Bytes("51 05 00 00 00 00 00 00 00 00 00 00 00")) == new BatteryRead(null, Asleep: true)
+            && LogitechCenturion.Battery(Bytes("51 05 00 03 1A 00 03 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 05 0A 2B 00 02")) is null
+            && LogitechCenturion.Battery(Bytes("51 03 00 03 1A 00 00 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(LogitechCenturion.Request()) is null);
     }
 
     private static void Others(Action<string, bool> check)
@@ -170,11 +173,13 @@ static class BrandsGapTests
         check("Corsair: the K65 PLUS, M75 and the Void v2 family on the bragi exchange; the Void v2's measured 81 %",
             Corsair.Find(0x1B1C, 0x2B07) is { Bare: false, Kind: DeviceKind.Keyboard } && Corsair.Find(0x1B1C, 0x2A08) is { Bare: true, Session: true }
             && Corsair.Find(0x1B1C, 0x0A97) is not null && Corsair.Percent(Bytes("01 01 02 00 2A 03")) == 81 && Corsair.Find(0x1B1C, 0x2B2A) is null);
-        check("Corsair Void Elite: C9 64 on its 0xFFC5 collection; the level without the microphone bit, 4 and 5 charging, 0 no headset",
+        check("Corsair Void Elite: C9 64 on its 0xFFC5 collection; the level without the microphone bit, 1 and 2 on battery, 4 and 5 charging, 0 no headset (asleep); another status, another report or the request none",
             BrandFamilies.Find(Shape(0x1B1C, 0x0A55, 0xFFC5, 1, 5, 64, [0xC9])) is { Family.Brand: "Corsair Void", Ways.Count: 1 }
             && BrandFamilies.Find(Shape(0x1B1C, 0x0A55, 0xFF42, 1, 5, 64, [0xC9])) is null
             && CorsairVoid.Battery(Bytes("64 00 C8 B1 01")) == new BatteryRead(72) && CorsairVoid.Battery(Bytes("64 00 32 B1 05")) == new BatteryRead(50, true)
-            && CorsairVoid.Battery(Bytes("64 00 32 B1 00")) is null && CorsairVoid.Battery(Bytes("64 00 32 B2 01")) is null);
+            && CorsairVoid.Battery(Bytes("64 00 14 B1 02")) == new BatteryRead(20) && CorsairVoid.Battery(Bytes("64 00 32 B1 04")) == new BatteryRead(50, true)
+            && CorsairVoid.Battery(Bytes("64 00 32 B1 00")) == new BatteryRead(null, Asleep: true) && CorsairVoid.Battery(Bytes("64 00 32 B1 03")) is null
+            && CorsairVoid.Battery(Bytes("64 00 32 B2 01")) is null && CorsairVoid.Battery(CorsairVoid.Request()) is null);
         check("Ninjutso Sora V2 and V2 8K: the Nordic read on their 0xFFA0 collection",
             Dongles.Find(0x1915, 0xAE8A, 0xFFA0, "", 32) == Dongles.Protocol.Nordic && Dongles.Find(0x1915, 0xAE8C, 0xFFA0, "", 32) == Dongles.Protocol.Nordic
             && Dongles.Find(0x1915, 0xAE8A, 0xFF02, "", 32) is null);
