@@ -75,7 +75,9 @@ internal sealed class MonitorStrip : FrameworkElement
             if (CompactFigures.Shows(reading, CompactFigures.Usage)) _usage |= reading.Item;
             if (CompactFigures.Shows(reading, CompactFigures.Temperature) && shows(reading.Item, StripAdmission.Heat)) _heat |= reading.Item;
             if (reading.Item == CompactMonitorItems.Gpu && CompactFigures.Shows(reading, CompactFigures.Vram) && shows(reading.Item, StripAdmission.VideoMemory)) _vram |= reading.Item;
-            if (reading.FiguresInLine) _inline |= reading.Item;
+            // A GPU set to show its video memory always keeps its figures in one line, whether or not the memory has reported yet (the
+            // settings menu locks the arrangement as soon as it is chosen), so the row does not change its layout when the first figure arrives.
+            if (reading.FiguresInLine || reading.Item == CompactMonitorItems.Gpu && CompactFigures.Shows(reading, CompactFigures.Vram)) _inline |= reading.Item;
         }
         var drives = readings.FirstOrDefault(reading => reading.Item == CompactMonitorItems.Storage) ?? new CompactReading { Item = CompactMonitorItems.Storage };
         bool driveUsage = CompactFigures.Shows(drives, CompactFigures.Usage), driveHeat = CompactFigures.Shows(drives, CompactFigures.Temperature);
