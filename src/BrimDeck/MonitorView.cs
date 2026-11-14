@@ -166,7 +166,7 @@ internal sealed class MonitorView : Grid
         if (hasMemory || hasNetwork)
         {
             if (hasMemory) _memory = new MemoryBlock(colors, layout.Metrics != MetricsMode.Blocks, layout.Body, layout.Caption);
-            if (hasNetwork) _network = new NetworkBlock(colors, layout.Metrics, layout.Body, layout.Caption, plan.Downloads, plan.Uploads);
+            if (hasNetwork) _network = new NetworkBlock(colors, layout.Metrics, layout.Body, layout.Caption, plan.Downloads, plan.Uploads, plan.UploadFirst);
             // In the table's order: whichever of memory and the network comes first is first.
             var order = plan.Parts.Select(part => part.Item).ToList();
             bool memoryFirst = !hasNetwork || hasMemory && order.FindIndex(item => item == ExpandedItem.Memory) < order.FindIndex(item => item is ExpandedItem.Download or ExpandedItem.Upload);

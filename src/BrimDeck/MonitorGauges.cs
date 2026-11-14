@@ -624,14 +624,16 @@ internal sealed class NetworkBlock : FrameworkElement
     private readonly double _body, _caption;
     // Which of the two rates the block shows (the table may choose one): one takes the whole width.
     private readonly bool _download, _upload;
+    // With both shown: the upload at the left, as the table orders them.
+    private readonly bool _uploadFirst;
     private NetworkSample? _rates;
     private IReadOnlyList<double> _down = [], _up = [];
     private string _reason = "";
 
-    public NetworkBlock(MonitorColors colors, MetricsMode mode, double body, double caption, bool download = true, bool upload = true)
+    public NetworkBlock(MonitorColors colors, MetricsMode mode, double body, double caption, bool download = true, bool upload = true, bool uploadFirst = false)
     {
         _colors = colors; _mode = mode == MetricsMode.Blocks ? MetricsMode.Lines : mode; _body = body; _caption = caption;
-        _download = download || !upload; _upload = upload || !download;
+        _download = download || !upload; _upload = upload || !download; _uploadFirst = uploadFirst;
         Height = Math.Ceiling(body * 1.7);
     }
 
@@ -641,7 +643,9 @@ internal sealed class NetworkBlock : FrameworkElement
     public void Set(Reading<NetworkSample> reading, IReadOnlyList<double> down, IReadOnlyList<double> up)
     {
         _rates = reading.OrDefault; _reason = reading.HasValue ? "" : reading.Reason; _down = down; _up = up;
-        ToolTip = _rates is { } r ? string.Join(" · ", new[] { _download ? Loc.T("下载 ", "Download ") + MonitorFormat.Rate(r.DownBytesPerSecond).Text : null, _upload ? Loc.T("上传 ", "Upload ") + MonitorFormat.Rate(r.UpBytesPerSecond).Text : null }.OfType<string>())
+        string? downText = _rates is { } d && _download ? Loc.T("下载 ", "Download ") + MonitorFormat.Rate(d.DownBytesPerSecond).Text : null;
+        string? upText = _rates is { } u && _upload ? Loc.T("上传 ", "Upload ") + MonitorFormat.Rate(u.UpBytesPerSecond).Text : null;
+        ToolTip = _rates is not null ? string.Join(" · ", (_uploadFirst ? new[] { upText, downText } : [downText, upText]).OfType<string>())
             : Loc.T("暂无读数：", "No reading: ") + _reason;
         InvalidateVisual();
     }
@@ -654,8 +658,9 @@ internal sealed class NetworkBlock : FrameworkElement
         drawing.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, w, ActualHeight));
         if (_download && _upload)
         {
-            Half(drawing, 0, half, line, MonitorGlyph.Down, _rates?.DownBytesPerSecond, _down, _colors.Download, ppd);
-            Half(drawing, half + 12, half, line, MonitorGlyph.Up, _rates?.UpBytesPerSecond, _up, _colors.Upload, ppd);
+            double downAt = _uploadFirst ? half + 12 : 0, upAt = _uploadFirst ? 0 : half + 12;
+            Half(drawing, downAt, half, line, MonitorGlyph.Down, _rates?.DownBytesPerSecond, _down, _colors.Download, ppd);
+            Half(drawing, upAt, half, line, MonitorGlyph.Up, _rates?.UpBytesPerSecond, _up, _colors.Upload, ppd);
         }
         else if (_download) Half(drawing, 0, w, line, MonitorGlyph.Down, _rates?.DownBytesPerSecond, _down, _colors.Download, ppd);
         else Half(drawing, 0, w, line, MonitorGlyph.Up, _rates?.UpBytesPerSecond, _up, _colors.Upload, ppd);
