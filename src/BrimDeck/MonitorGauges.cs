@@ -531,20 +531,30 @@ internal sealed class BlockGauge : FrameworkElement
         if (hover > .01) { drawing.PushOpacity(hover); drawing.DrawRoundedRectangle(UI.Brush(Look.Hex("hover")), null, box, radius, radius); drawing.Pop(); }
         double fill = Math.Max(3, Math.Clamp(_value.At(now), 0, 1) * h);
         drawing.DrawRoundedRectangle(UI.Brush(_color), null, new Rect(0, h - fill, w, fill), radius, radius);
+        Rect words = Rect.Empty;
         if (_label.Length > 0 && _caption > 0 && h >= _caption * 3 + 8)
         {
             double ppd = MonitorDraw.PixelsPerDip(this);
-            drawing.DrawDrawing(_words.Get((_label, _short, w, _caption, ppd, Look.Secondary), context =>
+            var label = (_words.Get((_label, _short, w, _caption, ppd, Look.Secondary), context =>
             {
                 var text = MonitorDraw.Text(_label, _caption, Look.Secondary, ppd);
                 if (text.WidthIncludingTrailingWhitespace > w - 6) text = MonitorDraw.Text(_short, _caption, Look.Secondary, ppd);
                 if (text.WidthIncludingTrailingWhitespace <= w - 6) MonitorDraw.Baseline(context, text, Math.Round((w - text.Width) / 2), Math.Round(4 + text.Baseline));
             }));
+            drawing.DrawDrawing(label);
+            words = label.Bounds;
         }
         if (!_hasTick || w < 10) return;
         var pen = new Pen(UI.Brush(Look.Current["textPrimary"].WithAlpha(0xB3).ToString()), 1.6); pen.Freeze();
         double y = Math.Round((1 - Math.Clamp(_tick.At(now), 0, 1)) * (h - 2)) + 1;
-        drawing.DrawLine(pen, new Point(w * .2, y), new Point(w * .8, y));
+        double left = w * .2, right = w * .8;
+        // A tick that falls on the label does not run through its letters: the line leaves a gap of the label's width there.
+        if (!words.IsEmpty && y >= words.Top - 2 && y <= words.Bottom + 2 && words.Right > left && words.Left < right)
+        {
+            if (words.Left - 2 > left) drawing.DrawLine(pen, new Point(left, y), new Point(words.Left - 2, y));
+            if (words.Right + 2 < right) drawing.DrawLine(pen, new Point(words.Right + 2, y), new Point(right, y));
+        }
+        else drawing.DrawLine(pen, new Point(left, y), new Point(right, y));
     }
     protected override void OnMouseEnter(MouseEventArgs e) { base.OnMouseEnter(e); if (PressFeedback.Hovers(true, e.StylusDevice is not null)) Hover(true); }
     protected override void OnMouseLeave(MouseEventArgs e) { base.OnMouseLeave(e); Hover(false); }

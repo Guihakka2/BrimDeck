@@ -590,7 +590,9 @@ public sealed partial class SettingsWindow
                 : figures.Count < 2 ? Loc.T("同时选择占用和温度时可用。", "Available when both usage and temperature are chosen.") : null;
             foreach (var inLine in new[] { false, true })
             {
-                bool on = reading.FiguresInLine == inLine;
+                // The arrangement that holds is ticked: with VRAM chosen the figures sit on one line whatever was saved (the saved choice
+                // comes back when VRAM is unchosen).
+                bool on = (reading.FiguresInLine || figures.Contains(CompactFigures.Vram)) == inLine;
                 Entry(inLine ? Loc.T("同一行", "One line") : Loc.T("分两行", "Two lines"), on, false, null,
                     () => edit(s => Reading(s, item).FiguresInLine = inLine), single);
             }
