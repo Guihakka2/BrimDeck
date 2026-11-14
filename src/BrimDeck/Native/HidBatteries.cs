@@ -859,12 +859,24 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return [Mouse(family.Prefix, info, family.Brand, found.Read, family.Kind(shape) ?? DeviceKind.Other, family.DisplayName(shape))];
     }
 
-    // One read as its family declares it (BrandWay): its frames before, the request and the answer, its frames after. Null when
-    // it was not answered; a report the collection refuses throws (Family counts it as not answered).
+    // One read as its family declares it (BrandWay): its frames before, its gate, the request and the answer, its frames after.
+    // Null when it was not answered; a report the collection refuses throws (Family counts it as not answered).
+    private static readonly Dictionary<string, (long At, BatteryRead Read)> Spaced = new(StringComparer.OrdinalIgnoreCase);
     private static BatteryRead? Run(HidInfo info, BrandWay way)
     {
+        string spacedKey = info.Path + "|" + way.Name;
+        if (way.MinIntervalMs > 0)
+            lock (Spaced)
+                if (Spaced.TryGetValue(spacedKey, out var last) && Environment.TickCount64 - last.At < way.MinIntervalMs) return last.Read;
+        var read = RunNow(info, way);
+        if (way.MinIntervalMs > 0 && read is { } fresh) lock (Spaced) Spaced[spacedKey] = (Environment.TickCount64, fresh);
+        return read;
+    }
+
+    private static BatteryRead? RunNow(HidInfo info, BrandWay way)
+    {
         using var device = new HidDevice(info) { StripZero = way.StripZero };
-        bool feature = way.Transport is WayTransport.Feature or WayTransport.FeatureListen;
+        bool feature = way.Transport is WayTransport.Feature or WayTransport.FeatureListen or WayTransport.FeatureGet;
         void Send(byte[] frame)
         {
             if (!feature) { device.Write(frame); return; }
@@ -873,19 +885,52 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         try
         {
             foreach (var frame in way.Before) { Send(frame); Thread.Sleep(way.GapMs); }
+            if (way.Gate is { } gate && way.Gated is { } gated)
+            {
+                var answer = Hid.Transact<object>([device], () => Send(gate), r => gated(r) is { } on ? on : null, way.TimeoutMs);
+                if (answer is not bool linked) return null;
+                if (!linked) return new BatteryRead(null, Asleep: true);
+            }
             for (int attempt = 0; attempt < Math.Max(1, way.Attempts); attempt++)
             {
                 if (attempt > 0) Thread.Sleep(way.GapMs);
-                if (way.Transport == WayTransport.Feature)
+                switch (way.Transport)
                 {
-                    Send(way.Request);
-                    Thread.Sleep(way.GapMs);
-                    int length = way.FeatureLength > 0 ? way.FeatureLength : Math.Max(way.Request.Length, device.FeatureLength);
-                    if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
-                    continue;
+                    case WayTransport.Feature:
+                    {
+                        Send(way.Request);
+                        Thread.Sleep(way.GapMs);
+                        int length = way.FeatureLength > 0 ? way.FeatureLength : Math.Max(way.Request.Length, device.FeatureLength);
+                        if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
+                        continue;
+                    }
+                    case WayTransport.FeatureGet:
+                    {
+                        int length = way.FeatureLength > 0 ? way.FeatureLength : device.FeatureLength;
+                        if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
+                        continue;
+                    }
+                    case WayTransport.OutputGetInput:
+                    {
+                        int length = Math.Max(2, info.InputLength);
+                        var stale = device.GetInput(way.ReplyId, length);
+                        Send(way.Request);
+                        long deadline = Environment.TickCount64 + way.TimeoutMs;
+                        while (Environment.TickCount64 < deadline)
+                        {
+                            Thread.Sleep(Math.Max(10, way.GapMs));
+                            if (device.GetInput(way.ReplyId, length) is not { } reply || stale is not null && reply.AsSpan().SequenceEqual(stale)) continue;
+                            if (way.Parse(reply) is { } read) return read;
+                        }
+                        continue;
+                    }
+                    default:
+                    {
+                        Action send = way.Transport == WayTransport.Listen ? () => { } : () => Send(way.Request);
+                        if (Hid.Transact<object>([device], send, r => way.Parse(r) is { } b ? b : null, way.TimeoutMs) is BatteryRead answer) return answer;
+                        continue;
+                    }
                 }
-                Action send = way.Transport == WayTransport.Listen ? () => { } : () => Send(way.Request);
-                if (Hid.Transact<object>([device], send, r => way.Parse(r) is { } b ? b : null, way.TimeoutMs) is BatteryRead answer) return answer;
             }
             return null;
         }

@@ -8,8 +8,8 @@ public readonly record struct HidShape(int Vendor, int Product, int UsagePage, i
 {
     public bool Declares(BrandWay way) => way.Transport switch
     {
-        WayTransport.Output or WayTransport.OutputListen => OutputIds.Contains(way.Request.Length > 0 ? way.Request[0] : (byte)0),
-        WayTransport.Feature or WayTransport.FeatureListen => FeatureIds.Contains(way.Request.Length > 0 ? way.Request[0] : (byte)0),
+        WayTransport.Output or WayTransport.OutputListen or WayTransport.OutputGetInput => OutputIds.Contains(way.Request.Length > 0 ? way.Request[0] : (byte)0),
+        WayTransport.Feature or WayTransport.FeatureListen or WayTransport.FeatureGet => FeatureIds.Contains(way.Request.Length > 0 ? way.Request[0] : (byte)0),
         WayTransport.Listen => InputLength > 0,
         _ => false
     };
@@ -21,7 +21,10 @@ public readonly record struct HidShape(int Vendor, int Product, int UsagePage, i
 // - FeatureListen: a feature report is set; the answer comes as an input report.
 // - OutputListen: as Output, the request only waking the device into sending what it sends anyway.
 // - Listen: nothing is sent; the device's own input reports are read for TimeoutMs (a battery it reports by itself).
-public enum WayTransport { Output, Feature, FeatureListen, OutputListen, Listen }
+// - OutputGetInput: an output report is written, then input report ReplyId is fetched (HidD_GetInputReport) every GapMs
+//   until it parses or TimeoutMs passes; the report as it was before the request (a stale answer) is never taken.
+// - FeatureGet: nothing is written; feature report Request[0] is fetched (FeatureLength bytes) and parsed.
+public enum WayTransport { Output, Feature, FeatureListen, OutputListen, Listen, OutputGetInput, FeatureGet }
 
 // One of a brand's battery reads. Name: stable across versions (kept in device-reads.json), "brand.read". Before: frames sent
 // first the same way (a session or mode a read needs), After: frames that undo them, sent whatever the answer. Attempts: how
@@ -37,6 +40,16 @@ public sealed record BrandWay(string Name, WayTransport Transport, byte[] Reques
     public IReadOnlyList<byte[]> Before { get; init; } = [];
     public IReadOnlyList<byte[]> After { get; init; } = [];
     public bool StripZero { get; init; }
+    // OutputGetInput: the input report fetched for the answer.
+    public byte ReplyId { get; init; }
+    // A question asked first, the same way, whose answer says whether the device can answer the read at all (a headset
+    // linked to its base): Gated true goes on, false means the device is off or asleep (the read answers that), null is not
+    // the answer. With no answer to it, the read is not sent.
+    public byte[]? Gate { get; init; }
+    public Func<byte[], bool?>? Gated { get; init; }
+    // At most one read in this time on one collection; between, the last reading stands (a device whose link suffers from
+    // being asked often).
+    public int MinIntervalMs { get; init; }
 }
 
 // A brand's devices and their reads. Takes: whether a collection is the brand's to read (its vendor, and for a vendor id
