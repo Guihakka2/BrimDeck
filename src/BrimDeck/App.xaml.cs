@@ -98,6 +98,9 @@ public partial class App : Application
         Store = new SettingsStore(folder); Settings = Store.Load();
         // Before anything is read: a reading left unanswered when the last run ended stops now (SensorGuard).
         SensorGuard.Start(folder);
+        // So is a first try of a device's read that the last run ended in (DeviceReadStore), with the reads kept for each device.
+        DeviceReadStore.Start(folder);
+        DeviceReadSwitches.Use(DeviceLists.ReadOff(Settings.DeviceChoices));
         UseLanguage(); UseFont();
         PanelTheme.Use(Settings);
         ScheduleDaylight();
@@ -230,7 +233,12 @@ public partial class App : Application
         bool syncEnabled = settings.UsageAutoSync && !Settings.UsageAutoSync;
         // A new collapsed style morphs every panel's surface into its form (MainWindow.MorphShape).
         bool styleChanged = settings.Style != Settings.Style, memoryChanged = settings.MemoryMode != Settings.MemoryMode;
-        settings.Normalize(); Settings = settings;
+        settings.Normalize();
+        // A device's reading turned on again may be tried afresh, what went wrong on it forgotten (DeviceReadBook.Resume).
+        var readOff = DeviceLists.ReadOff(settings.DeviceChoices).ToList();
+        foreach (var device in DeviceReadSwitches.Off.Except(readOff, StringComparer.OrdinalIgnoreCase)) DeviceReadStore.Book.Resume(device);
+        DeviceReadSwitches.Use(readOff);
+        Settings = settings;
         if (memoryChanged) ApplyMemoryMode();
         // A monitor page switched on in the smooth mode has its counters set up ahead, as at start.
         else if (MemoryPlan.WarmAtStart) WarmMonitor();

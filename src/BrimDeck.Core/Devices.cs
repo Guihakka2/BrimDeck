@@ -55,6 +55,10 @@ public sealed class DeviceChoice
     public string? ChargeColor { get; set; }
     public string? WarningColor { get; set; }
     public string? CriticalColor { get; set; }
+    // The device's vendor and product ("VVVV:PPPP", DeviceBattery.Hardware), and whether its battery is read: turned off, nothing
+    // is sent to it any more (DeviceReadSwitches) and it is listed without a reading.
+    public string? Hardware { get; set; }
+    public bool Read { get; set; } = true;
     public DeviceChoice Copy() => (DeviceChoice)MemberwiseClone();
 }
 
@@ -63,6 +67,10 @@ public sealed class DeviceChoice
 public static class DeviceLists
 {
     public const int MaximumLabel = 60;
+
+    // The devices whose reading the user turned off.
+    public static IEnumerable<string> ReadOff(IReadOnlyList<DeviceChoice> choices)
+        => choices.Where(choice => !choice.Read && !string.IsNullOrEmpty(choice.Hardware)).Select(choice => choice.Hardware!).Distinct(StringComparer.OrdinalIgnoreCase);
 
     public static DeviceChoice? Find(IReadOnlyList<DeviceChoice> choices, string key)
     {
@@ -97,7 +105,7 @@ public static class DeviceLists
         return [.. listed.Select(key =>
         {
             var choice = Find(choices, key)?.Copy() ?? new DeviceChoice { Key = key };
-            if (all.FirstOrDefault(device => device.Key == key) is { } device) { choice.Name = device.Name; choice.Kind = device.Kind; }
+            if (all.FirstOrDefault(device => device.Key == key) is { } device) { choice.Name = device.Name; choice.Kind = device.Kind; choice.Hardware = device.Hardware ?? choice.Hardware; }
             return choice;
         })];
     }
