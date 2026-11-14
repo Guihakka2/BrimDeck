@@ -702,7 +702,7 @@ internal sealed class QuotaCarousel : GlideCarousel
                 Application.Current?.MainWindow is { } window ? VisualTreeHelper.GetDpi(window).PixelsPerDip : 1, UI.PanelFont, UI.Brush(UI.Secondary)) is { } letter)
             ring.Children.Add(letter);
         // A reading of the previous run (UsageLastSeen) is dimmed until the new one replaces it.
-        if (item.Stale) ring.Opacity = .5;
+        if (item.Stale) ring.Opacity = BrimDeck.Core.UsageLastSeen.Dimmed;
         return ring;
     }
 

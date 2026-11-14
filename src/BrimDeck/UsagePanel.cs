@@ -232,17 +232,10 @@ public partial class MainWindow
             empty.Children.Add(open); UsageContent.Children.Add(empty);
             return;
         }
-        if (_details)
-        {
-            _usageForm = "details";
-            var shownStatistics = DashboardUsage.Statistics(Settings, Snapshots);
-            RenderModels(shownStatistics);
-            // Totals of the previous run (UsageLastSeen) are dimmed, and the page says so in its tip, until the new ones replace them.
-            var restored = shownStatistics.Where(snapshot => snapshot.LastSeenAt is not null).ToList();
-            UsageContent.Opacity = restored.Count > 0 ? .55 : 1;
-            UsageContent.ToolTip = restored.Count > 0 ? string.Join("\n", restored.Select(snapshot => snapshot.Name + " · " + snapshot.UsageNote)) : null;
-        }
-        else { UsageContent.Opacity = 1; UsageContent.ToolTip = null; RenderColumns(DashboardUsage.Columns(Settings, Snapshots)); }
+        // Totals of the previous run (UsageLastSeen) are dimmed row by row in the details (RenderModels), never the page itself, whose
+        // opacity the page hand-over animates.
+        if (_details) { _usageForm = "details"; RenderModels(DashboardUsage.Statistics(Settings, Snapshots)); }
+        else RenderColumns(DashboardUsage.Columns(Settings, Snapshots));
     }
 
     // A joined switch: one rounded strip, the selected segment filled. Buttons carry accessible names. With a glide key the fill
@@ -492,7 +485,7 @@ public partial class MainWindow
             }
             body = stack;
         }
-        if (snapshot.LastSeenAt is not null) body.Opacity = .55;
+        if (snapshot.LastSeenAt is not null) body.Opacity = UsageLastSeen.Dimmed;
         Grid.SetRow(body, 1); column.Children.Add(body);
 
         if (layout.Footer)
@@ -514,7 +507,7 @@ public partial class MainWindow
             {
                 var rows = new StackPanel(); rows.Children.Add(today); rows.Children.Add(week); footer.Children.Add(rows);
             }
-            if (usage.LastSeenAt is not null) footer.Opacity = .55;
+            if (usage.LastSeenAt is not null) footer.Opacity = UsageLastSeen.Dimmed;
             Grid.SetRow(footer, 2); column.Children.Add(footer);
         }
         var surface = new Border
