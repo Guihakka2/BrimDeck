@@ -65,6 +65,7 @@ try
     BrandsKeyboardTests.Run(Check);
     BrandsHeadsetTests.Run(Check);
     BrandsMouseTests.Run(Check);
+    BrandsGapTests.Run(Check);
     PowerTests.Run(Check);
     DevicesPageTests.Run(Check);
     FrameRateTests.Run(Check);
