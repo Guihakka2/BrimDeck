@@ -21,6 +21,17 @@ static class BrandsHeadsetTests
 
     public static void Run(Action<string, bool> check)
     {
+        // The PA charging answer, laid out as blackshark.py's parse_reply reads it (constructed): command 2A at 12, ACK 01, length 1,
+        // the flag. Barracuda Pro the same two bytes later.
+        var paCharge = new byte[64]; paCharge[0] = 0x02; paCharge[2] = 0x50; paCharge[3] = 0x49; paCharge[12] = 0x2A; paCharge[13] = 0x01; paCharge[14] = 0x01; paCharge[15] = 0x01;
+        var paLevelReply = (byte[])paCharge.Clone(); paLevelReply[12] = 0x21; paLevelReply[15] = 79;
+        var bcCharge = new byte[64]; bcCharge[0] = 0x01; bcCharge[3] = 0x50; bcCharge[4] = 0x49; bcCharge[13] = 0x2A; bcCharge[14] = 0x01; bcCharge[15] = 0x01; bcCharge[16] = 0x00;
+        check("Razer PA and Barracuda Pro: the charging question (2A) after the level, its answer, and the level answer is not a charging one",
+            BrimDeck.Core.RazerHeadsets.PaQuery(0x2A)[10] == 0x2A && BrimDeck.Core.RazerHeadsets.PaCharging(paCharge) == true
+            && BrimDeck.Core.RazerHeadsets.PaCharging(paLevelReply) is null && BrimDeck.Core.RazerHeadsets.BarracudaCharging(bcCharge) == false
+            && BrandFamilies.Find(new HidShape(0x1532, 0x0555, 0xFF00, 1, -1, 64, 64, 0, new HashSet<byte> { 0x02 }, new HashSet<byte>(), "")) is { } pa
+            && pa.Ways[0].Then is { } then && then[10] == 0x2A && pa.Ways[0].Charging is not null);
+
         Existing(check);
         Razer(check);
         Sony(check);
@@ -45,7 +56,7 @@ static class BrandsHeadsetTests
             && steelseries.All(product => Headsets.Find(SteelSeriesHeadsets.Vendor, product) is null && SteelSeriesMice.Find(SteelSeriesHeadsets.Vendor, product) is null
                 && SteelSeriesHeadsets.Find(product) is not null)
             && BrimDeck.Core.Asus.Find(AsusStrixGo.Vendor, AsusStrixGo.Dongle) is null && BrimDeck.Core.Asus.Find(AsusStrixGo.Vendor, AsusStrixGo.Cable) is null
-            && new[] { SonyInzone.H5, SonyInzone.H9II, SonyInzone.Buds }.All(product => Pushes.Find(SonyInzone.Vendor, product, 0xFF04, 1, -1, 64) is null));
+            && new[] { SonyInzone.H5, SonyInzone.H9II }.All(product => Pushes.Find(SonyInzone.Vendor, product, 0xFF04, 1, -1, 64) is null));
         check("Headset brands: SteelSeries headsets the Headsets class reads (Nova 7) and its mice are not taken",
             Untaken(Shape(0x1038, 0x22A1, 0xFFC0, 1, 3, outputIds: [0]), "SteelSeries Headset")
             && Untaken(Shape(0x1038, 0x1838, 0xFFC0, 1, 3, outputIds: [0]), "SteelSeries Headset"));
@@ -54,15 +65,19 @@ static class BrandsHeadsetTests
     private static void Razer(Action<string, bool> check)
     {
         const string brand = "Razer Headset";
-        check("Razer headsets: the 2020 BlackShark and the Nari take the feature read on 0xFF00 usage 1 (in either byte order); a mouse in Razer's catalog is not taken",
+        check("Razer headsets: the 2020 BlackShark (its page as measured on Windows) and the Nari (either byte order) take the feature read on 0xFF00 usage 1 with a 64-byte feature report; a mouse in Razer's catalog is not taken",
             Names(Shape(0x1532, 0x0528, 0xFF00, 1, feature: 64, featureIds: [0xFF]), brand).SequenceEqual(["razer-headset.status"])
             && Names(Shape(0x1532, 0x051C, 0x00FF, 1, feature: 64, featureIds: [0xFF]), brand).SequenceEqual(["razer-headset.status"])
+            && Untaken(Shape(0x1532, 0x0528, 0x00FF, 1, feature: 64, featureIds: [0xFF]), brand)
+            && Untaken(Shape(0x1532, 0x0528, 0xFF00, 1, feature: 32, featureIds: [0xFF]), brand)
             && Untaken(Shape(0x1532, 0x0528, 0x000C, 1, feature: 64, featureIds: [0xFF]), brand)
             && Untaken(Shape(0x1532, 0x052E, 0xFF00, 1, feature: 64, featureIds: [0xFF]), brand)
             && Untaken(Shape(0x1532, 0x00B7, 0xFF00, 1, feature: 91, featureIds: [0]), brand));
-        check("Razer headsets: PA on 0xFF00 or 0xFF14 for the 2023 BlackShark, report 01 on usage 0 for the Barracuda Pro, the Kraken V4 on 0xFF14; the Barracuda X and BlackShark V3 are not taken",
+        check("Razer headsets: PA on 0xFF00 or 0xFF14 for the 2023 BlackShark, report 01 on usage 0 for the Barracuda Pro, the Kraken V4 on 0xFF14 (each page as Windows gave it to the sources); the Barracuda X and BlackShark V3 are not taken",
             Names(Shape(0x1532, 0x0555, 0xFF00, 1, 3, outputIds: [0x02]), brand).SequenceEqual(["razer-headset.pa"])
             && Names(Shape(0x1532, 0x0583, 0xFF14, 1, outputIds: [0x02]), brand).SequenceEqual(["razer-headset.pa"])
+            && Untaken(Shape(0x1532, 0x0555, 0x00FF, 1, 3, outputIds: [0x02]), brand) && Untaken(Shape(0x1532, 0x0555, 0xFF00, 1, 3, input: 32, outputIds: [0x02]), brand)
+            && Untaken(Shape(0x1532, 0x053A, 0x00FF, 0, outputIds: [0x01]), brand) && Untaken(Shape(0x1532, 0x056C, 0x14FF, 1, 5, outputIds: [0x02]), brand)
             && BrandFamilies.Find(Shape(0x1532, 0x0556, 0xFF00, 1, outputIds: [0x01])) is { Ways.Count: 0 }
             && Names(Shape(0x1532, 0x053A, 0xFF00, 0, outputIds: [0x01]), brand).SequenceEqual(["razer-headset.barracuda"])
             && Untaken(Shape(0x1532, 0x053A, 0x000C, 1, outputIds: [0x01]), brand)
@@ -72,7 +87,8 @@ static class BrandsHeadsetTests
         var status = Shape(0x1532, 0x0528, 0xFF00, 1, feature: 64, featureIds: [0xFF]);
         var statusWay = BrandFamilies.Find(status)!.Value.Ways[0];
         check("Razer headsets: the 2020 request, and HaloBattery's measured answers on battery (80), charged (100) and charging (no level), the Nari's capture (30, 3552 mV)",
-            statusWay.Request.Length == 64 && statusWay.Request.AsSpan(0, 9).SequenceEqual(Hex("FF 0A 00 FD 04 12 F1 02 05")) && statusWay.GapMs == 100
+            statusWay.Request.Length == 64 && statusWay.Request.AsSpan(0, 9).SequenceEqual(Hex("FF 0A 00 FD 04 12 F1 02 05")) && statusWay.GapMs >= 100
+            && statusWay.Attempts == 2
             && RazerHeadsets.StatusBattery(Hex("FF 0F 05 FE 12 04 1F 08 05 03 05 01 0E C0 50", 64)) == new BatteryRead(80, Coarse: true)
             && RazerHeadsets.StatusBattery(Hex("FF 0F 05 FE 12 04 1F 08 05 06 05 06 10 88 64", 64)) == new BatteryRead(100, Coarse: true)
             && RazerHeadsets.StatusBattery(Hex("FF 0F 05 FE 12 04 1F 08 05 05 03 09 10 80 50", 64)) == new BatteryRead(null, Charging: true)
@@ -82,6 +98,14 @@ static class BrandsHeadsetTests
             && RazerHeadsets.StatusBattery(RazerHeadsets.StatusRequest()) is null
             && RazerHeadsets.StatusBattery(Hex("FF 0F 05 FE 12 04 1F 08 05 03 05 01 00 00 00", 64)) == new BatteryRead(null, Asleep: true)
             && RazerHeadsets.StatusBattery(Hex("FF 0F 05 FE 12 04 1F 08 05 03 05 01 0E C0 FF", 64)) is null);
+        // HaloBattery's measured "headset off" read: the stale header, still there when it gives up.
+        var off = Hex("FF 01 00 FE 12 04 1F 08 05 05 03 09 10 88 50", 64);
+        var reads = RazerHeadsets.StatusReads();
+        var late = RazerHeadsets.StatusReads();
+        check("Razer headsets: the stale copy at the first try is no reading (the answer may not be there yet), at the second the headset off; a fresh answer at the second try is the reading",
+            reads(off) is null && reads(off) == new BatteryRead(null, Asleep: true)
+            && late(off) is null && late(Hex("FF 0F 05 FE 12 04 1F 08 05 03 05 01 0E C0 50", 64)) == new BatteryRead(80, Coarse: true)
+            && RazerHeadsets.StatusReads()(RazerHeadsets.StatusRequest()) is null);
 
         var pa = BrandFamilies.Find(Shape(0x1532, 0x0555, 0xFF00, 1, 3, outputIds: [0x02]))!.Value.Ways[0];
         check("Razer headsets: PA remote mode on twice before the query and off after, the frames as HaloBattery and vigil-watt give them",
@@ -119,12 +143,12 @@ static class BrandsHeadsetTests
     private static void Sony(Action<string, bool> check)
     {
         const string brand = "Sony INZONE";
-        check("Sony INZONE: the H5 on 0xFF04 usage 2, the H9 II on usage 1 interface 5, the Buds listened to; a DualSense, the H9 (serial), the PULSE Explore and the PULSE 3D are not taken",
+        check("Sony INZONE: the H5 on 0xFF04 usage 2, the H9 II on usage 1 interface 5, with 64-byte reports; a DualSense, the H9 (serial), the Buds (they only push), the PULSE Explore and the PULSE 3D are not taken",
             Names(Shape(0x054C, 0x0EBF, 0xFF04, 2, 0, outputIds: [0x02]), brand).SequenceEqual(["inzone.battery"])
             && Names(Shape(0x054C, 0x0FA8, 0x04FF, 1, 5, outputIds: [0x02]), brand).SequenceEqual(["inzone.battery"])
             && Untaken(Shape(0x054C, 0x0FA8, 0xFF04, 1, 4, outputIds: [0x02]), brand) && Untaken(Shape(0x054C, 0x0EBF, 0xFF04, 1, 0, outputIds: [0x02]), brand)
-            && Names(Shape(0x054C, 0x0EC2, 0xFF04, 1, output: 0), brand).SequenceEqual(["inzone.buds"])
-            && new[] { 0x0CE6, 0x0E53, 0x0ECC, 0x0ED0, 0x0D5E }.All(product => Untaken(Shape(0x054C, product, 0xFF04, 1, outputIds: [0x02]), brand)));
+            && Untaken(Shape(0x054C, 0x0EBF, 0xFF04, 2, 0, input: 32, outputIds: [0x02]), brand)
+            && new[] { 0x0CE6, 0x0E53, 0x0EC2, 0x0ECC, 0x0ED0, 0x0D5E }.All(product => Untaken(Shape(0x054C, product, 0xFF04, 1, outputIds: [0x02]), brand)));
         var request = SonyInzone.Request();
         // The answer laid out as HeadsetControl parses it (no answer is quoted there): length 14, the sum of 5..14 at 15.
         static byte[] Event(byte charger, byte percent, byte type = 0x10, byte transaction = 0x02)
@@ -142,13 +166,8 @@ static class BrandsHeadsetTests
             && SonyInzone.Battery(Event(0, 0x50)) == new BatteryRead(80) && SonyInzone.Battery(Event(1, 0x32)) == new BatteryRead(50, true)
             && SonyInzone.Battery(Event(0, 0xFF)) == new BatteryRead(null, Asleep: true)
             && SonyInzone.Battery(broken) is null && SonyInzone.Battery(Event(0, 0x50, transaction: 0x01)) is null
-            && SonyInzone.Battery(Hex("02 0C 01 00 FC 08 96 C3 41 04 01 02 00 A1", 64)) is null && SonyInzone.Battery(Event(0, 0x00)) is null);
-        var buds = Hex("02 12 04", 64);
-        buds[14] = 80; buds[16] = 70; buds[18] = 50; buds[19] = (80 + 70 + 117) & 0xFF;
-        var badBuds = (byte[])buds.Clone();
-        badBuds[19]++;
-        check("Sony INZONE: the Buds' report gives the lower bud (the case is not the reading); a wrong check byte or another report is none",
-            SonyInzone.BudsBattery(buds) == new BatteryRead(70) && SonyInzone.BudsBattery(badBuds) is null && SonyInzone.BudsBattery(Hex("02 13 04", 64)) is null);
+            && SonyInzone.Battery(Hex("02 0C 01 00 FC 08 96 C3 41 04 01 02 00 A1", 64)) is null && SonyInzone.Battery(Event(0, 0x00)) is null
+            && SonyInzone.Battery(Event(0, 0x65)) is null);
     }
 
     private static void Jabra(Action<string, bool> check)
@@ -160,12 +179,15 @@ static class BrandsHeadsetTests
             && Names(Shape(0x0B0E, 0x2519, 0xFF00, 1, 3, outputIds: [0x05]), brand).SequenceEqual(["jabra.usb", "jabra.dongle"])
             && BrandFamilies.Find(Shape(0x0B0E, 0x24C7, 0xFF00, 1, 3, outputIds: [0x04])) is { Ways.Count: 0 }
             && Untaken(Shape(0x0B0E, 0x24C7, 0xFF00, 2, 3, outputIds: [0x05]), brand) && Untaken(Shape(0x0B0F, 0x24C7, 0xFF00, 1, 3, outputIds: [0x05]), brand));
-        check("Jabra: the GET 12/02 to the headset; HaloBattery's measured payload 04 15 (21 %); a refusal, the request read back and another address's answer are none",
+        // The refusals as HeadsetControl documents them (group FE, the reason in place of the command; constructed).
+        check("Jabra: the GET 12/02 to the headset; HaloBattery's measured payload 04 15 (21 %); the dongle's \"headset offline\" refusal (F3) the headset asleep; \"nothing at that address\" (F5), F3 from the cable's address, the request read back and another address's answer are none",
             BrimDeck.Core.Jabra.Request(BrimDeck.Core.Jabra.Dongle).SequenceEqual(Hex("05 04 00 20 46 12 02"))
             && BrimDeck.Core.Jabra.Request(BrimDeck.Core.Jabra.Usb).SequenceEqual(Hex("05 08 00 20 46 12 02"))
             && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 00 04 20 C8 12 02 04 15", 64)) == new BatteryRead(21)
             && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 00 04 20 CA 12 02 01 3C 0F A0", 64)) == new BatteryRead(60, true)
-            && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 00 04 20 C8 FE F3 00 00", 64)) is null
+            && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 00 04 20 C6 FE F3", 64)) == new BatteryRead(null, Asleep: true)
+            && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 00 04 20 C6 FE F5", 64)) is null
+            && BrimDeck.Core.Jabra.Battery(0x08)(Hex("05 00 08 20 C6 FE F3", 64)) is null
             && BrimDeck.Core.Jabra.Battery(0x04)(Hex("05 04 00 20 46 12 02", 64)) is null
             && BrimDeck.Core.Jabra.Battery(0x08)(Hex("05 00 04 20 C8 12 02 04 15", 64)) is null);
     }
@@ -180,12 +202,12 @@ static class BrandsHeadsetTests
             && Names(Shape(0x373B, 0x1262, 0x90FF, 1, 0, outputIds: [0x55]), "ATK Headset").SequenceEqual(["atk-headset.state"])
             && Untaken(Shape(0x373B, 0x1262, 0xFF82, 1, 0, outputIds: [0x55]), "ATK Headset")
             && Untaken(Shape(0x373B, 0x1262, 0xFF05, 1, 0, outputIds: [0x55]), "ATK Headset")
-            && Untaken(Shape(0x373B, 0x1263, 0xFF90, 1, 0, outputIds: [0x55]), "ATK Headset")
+            && Untaken(Shape(0x373B, 0x1263, 0xFF90, 1, 0, outputIds: [0x55]), "ATK Headset") && Untaken(Shape(0x373B, 0x1262, 0xFF90, 2, 0, outputIds: [0x55]), "ATK Headset")
             && Dongles.Find(0x373B, 0x1262, 0xFF90, "ATK N9V2 ULTIMATE dongle", 0, 0, 1, 64, 64) is null);
         check("FIFINE and ATK: the query 55 65 01 00; Voltide's measured answer (100 %), charging, full, the headset off (55 0A) and the link lost (1A); the query read back is none",
             Fifine.Request().SequenceEqual(Hex("55 65 01 00")) && AtkHeadsets.Request().SequenceEqual(Hex("55 65 01 00"))
             && AtkHeadsets.StateBattery(Hex("55 65 64 02 02 00 00 04 00 00 00 00 01 02 01 00 05 02 00", 64)) == new BatteryRead(100)
-            && Fifine.Battery(Hex("55 65 32 03", 64)) == new BatteryRead(50, true)
+            && Fifine.Battery(Hex("55 65 32 03", 64)) == new BatteryRead(50, true) && Fifine.Battery(Hex("55 65 50 02 02 00 00 FF", 64)) == new BatteryRead(80)
             && AtkHeadsets.StateBattery(Hex("55 65 63 04", 64)) == new BatteryRead(100)
             && AtkHeadsets.StateBattery(Hex("55 0A 00 00", 64)) == new BatteryRead(null, Asleep: true)
             && Fifine.Battery(Hex("55 65 40 1A", 64)) == new BatteryRead(null, Asleep: true)
@@ -226,16 +248,18 @@ static class BrandsHeadsetTests
             && Parse(dongle, Reply(3831, 0x03)) == new BatteryRead(75, Coarse: true) && Parse(dongle, Reply(3743, 0x03)) == new BatteryRead(50, Coarse: true)
             && Parse(dongle, Reply(3897, 0x0A)) == new BatteryRead(50, true, Coarse: true) && Parse(dongle, Reply(4150, 0x03)) == new BatteryRead(100, Coarse: true)
             && Parse(cable, Reply(4077, 0x03)) == new BatteryRead(75, true, Coarse: true));
-        check("ASUS Strix Go 2.4: the unknown-packet answer (FF AA), zeros, a frame without the live header and the request read back are none",
-            Parse(dongle, Hex("FF FF AA", 64)) is null && Parse(dongle, Hex("FF", 64)) is null && Parse(dongle, Reply(3831, 0x03).Select((b, i) => i == 1 ? (byte)0x1A : b).ToArray()) is null
+        check("ASUS Strix Go 2.4: bytes 1 to 3 zero (off or asleep, HaloBattery) asleep; the unknown-packet answer (FF AA), a frame without the live header and the request read back are none",
+            Parse(dongle, Hex("FF", 64)) == new BatteryRead(null, Asleep: true)
+            && Parse(dongle, Hex("FF FF AA", 64)) is null && Parse(dongle, Reply(3831, 0x03).Select((b, i) => i == 1 ? (byte)0x1A : b).ToArray()) is null
             && Parse(dongle, BrandFamilies.Find(dongle)!.Value.Ways[0].Request) is null);
     }
 
     private static void Astro(Action<string, bool> check)
     {
         var base5 = Shape(0x046D, 0x0B1C, 0xFF32, 0x74, 8, outputIds: [0x02]);
-        check("ASTRO A50 Gen 5: its 0xFF32 usage 0x74 collection only (Logitech's 0xFF00 is HID++'s); the Gen 4 is not taken",
+        check("ASTRO A50 Gen 5: its 0xFF32 usage 0x74 collection only, the page as Windows gave it to HaloBattery (Logitech's 0xFF00 is HID++'s); the Gen 4 is not taken",
             Names(base5, "ASTRO").SequenceEqual(["astro.battery"]) && Untaken(Shape(0x046D, 0x0B1C, 0xFF00, 1, outputIds: [0x02]), "ASTRO")
+            && Untaken(Shape(0x046D, 0x0B1C, 0x32FF, 0x74, 8, outputIds: [0x02]), "ASTRO") && Untaken(Shape(0x046D, 0x0B1C, 0xFF32, 0x74, 8, input: 9, outputIds: [0x02]), "ASTRO")
             && Untaken(Shape(0x046D, 0xC539, 0xFF32, 0x74, outputIds: [0x02]), "ASTRO") && Untaken(Shape(0x9886, 0x002C, 0xFF32, 0x74, outputIds: [0x02]), "ASTRO"));
         check("ASTRO A50 Gen 5: the GET 02 0C 03 00 06 0C; the documented answer 02 0C 06 00 06 00 <percent> <level> <dock>; the GET read back is none",
             AstroA50.Request().SequenceEqual(Hex("02 0C 03 00 06 0C"))
@@ -277,6 +301,20 @@ static class BrandsHeadsetTests
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 05 10 00 02 00 00 03 00 01 01 5A 39 2C", 64)) is null
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 00 11 00 03 00 00 03 00 01 01 5A 98 B5", 64)) is null
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 00 11 00 03 00 00 10 00 03 0E 00 01 01 01 09 30 31 2E 30 31 2E 30 35 00 7A DC", 64)) is null);
+        static byte[] Notice(params byte[] payload)
+        {
+            var frame = new byte[64];
+            new byte[] { 0xFE, 0x00, 0x11, 0x00, 0x03, 0x00, 0x00, (byte)payload.Length, 0x00 }.CopyTo(frame, 0);
+            payload.CopyTo(frame, 9);
+            ushort sum = BrimDeck.Core.Darkrim.Crc16(frame.AsSpan(0, 9 + payload.Length));
+            frame[9 + payload.Length] = (byte)(sum >> 8); frame[10 + payload.Length] = (byte)sum;
+            return frame;
+        }
+        check("DARKRIM: left, right and case: the lower bud, charging by bit 7; all three 0 (not linked) asleep; a single 0 none",
+            BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0x50, 0x46, 0x64)) == new BatteryRead(70)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0xD0, 0x46, 0x64)) == new BatteryRead(70, true)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0x00, 0x00, 0x00)) == new BatteryRead(null, Asleep: true)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x01, 0x00)) is null);
     }
 
     private static void Edifier(Action<string, bool> check)
@@ -322,9 +360,13 @@ static class BrandsHeadsetTests
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 08", 64)) == new BatteryRead(93)
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 02", 64)) == new BatteryRead(93, true)
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 01", 64)) == new BatteryRead(null, Asleep: true));
-        check("SteelSeries headsets: each request read back, buds both in the case, another report, and a level out of range are none",
+        check("SteelSeries headsets: buds both docked or off are asleep (HeadsetControl's offline); the Elite on its cable (power 02) charges",
+            Parse(buds, Hex("B0 00 00 02 02 00 00", 64)) == new BatteryRead(null, Asleep: true) && Parse(buds, Hex("B0 00 00 03 02 00 00", 64)) == new BatteryRead(null, Asleep: true)
+            && Parse(elite, Hex("01 B0 00 00 01 00 1F 64 00 00 00 00 00 00 02", 64)) == new BatteryRead(31, true)
+            && Parse(elite, Hex("01 B0 00 00 01 00 1F 64 00 00 00 00 00 00 04", 64)) == new BatteryRead(31));
+        check("SteelSeries headsets: each request read back, another report, and a level out of range are none",
             Parse(arctis1, Hex("06 12 00 00", 8)) is null && Parse(plus, Hex("B0", 64)) is null && Parse(nova5, Hex("B0", 64)) is null
-            && Parse(buds, Hex("B0", 64)) is null && Parse(buds, Hex("B0 00 00 02 02 00 00", 64)) is null
+            && Parse(buds, Hex("B0", 64)) is null && Parse(buds, Hex("B0 00 00 01 02 00 00", 64)) is null
             && Parse(elite, Hex("01 B0", 64)) is null && Parse(omni, Hex("01 B0", 64)) is null
             && Parse(nova5, Hex("01 00 63 02 00", 64)) is null && Parse(plus, Hex("B0 00 05 00", 64)) is null && Parse(nova5, Hex("B0 03 00 C8 00", 64)) is null);
     }

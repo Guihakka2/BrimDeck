@@ -97,6 +97,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     // The worker's own: whether it has made a full pass since it started (_listed waits for the UI thread to take the result).
     private bool _scanned;
     private volatile bool _restart;
+    // The worker's own: the switches as the last pass saw them (DeviceReadSwitches).
+    private IReadOnlySet<string>? _offSeen;
     // The worker's own: each source's current list, as last reported.
     private readonly Dictionary<DeviceSource, List<DeviceBattery>> _current = [];
 
@@ -134,7 +136,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             }
             else if (Hidpp.Event(report) is { } e && _indices.TryGetValue((group, e.Device), out var battery) && battery.Feature == e.Feature)
                 device = _logitech.Event(group, e.Device, battery.Battery, e.Parameters);
-            if (device is null) continue;
+            if (device is null || device.Hardware is { } hardware && DeviceReadSwitches.IsOff(hardware)) continue;
             if (!_current.TryGetValue(DeviceSource.Logitech, out var list)) _current[DeviceSource.Logitech] = list = [];
             int at = list.FindIndex(known => known.Key == device.Key);
             if (at >= 0 && list[at] == device) continue;
@@ -168,7 +170,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         while (_sideQueue.TryDequeue(out var item))
         {
             var (origin, device) = item;
-            if (_demand == DeviceDemand.None || !Attached(device)) continue;
+            // A reading that was under way as the user turned the device's reading off is not shown.
+            if (_demand == DeviceDemand.None || !Attached(device) || DeviceReadSwitches.IsOff(device.Hardware!)) continue;
             _side[origin] = device;
             if (!_current.TryGetValue(device.Source, out var list)) _current[device.Source] = list = [];
             int at = list.FindIndex(known => known.Key == device.Key);
@@ -180,7 +183,9 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return changed;
     }
     // Whether the collection a helper's reading came through is still there (its vendor and product).
-    private bool Attached(DeviceBattery device) => _infos.Values.Any(info => Devices.Hardware(info.Vendor, info.Product) == device.Hardware);
+    private bool Attached(DeviceBattery device) => device.Hardware is { } hardware && _hardware.Contains(hardware);
+    // The vendors and products of the collections there now ("VVVV:PPPP"), from the last pass (Scan).
+    private HashSet<string> _hardware = new(StringComparer.OrdinalIgnoreCase);
 
     // A pushed reading as the device it is (PushEvents): the Steam puck holds a controller per interface.
     internal static DeviceBattery Pushed(HidInfo info, Pushes.Kind kind, BatteryRead state, string? name)
@@ -203,7 +208,13 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             // Set and read on the watcher's threads.
             watcher.EnumerationCompleted += (_, _) => Volatile.Write(ref listed, true);
             watcher.Added += (_, _) => { if (Volatile.Read(ref listed) && generation == Volatile.Read(ref _generation)) { _arrived = true; Wake(); } };
-            watcher.Removed += (_, _) => { if (Volatile.Read(ref listed) && generation == Volatile.Read(ref _generation)) { _removed = true; Wake(); } };
+            watcher.Removed += (_, update) =>
+            {
+                // When each USB device last lost a collection, for a first try it may have followed (Present).
+                if (Hid.Ids(update.Id) is var (vendor, product) and not (0, 0) && !Hid.IsBluetooth(update.Id))
+                    Removals[Devices.Hardware(vendor, product)] = Environment.TickCount64;
+                if (Volatile.Read(ref listed) && generation == Volatile.Read(ref _generation)) { _removed = true; Wake(); }
+            };
             // A watcher that does not handle updates stops reporting arrivals after its first listing.
             watcher.Updated += (_, _) => { };
             watcher.Start();
@@ -249,8 +260,12 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             bool linkUp = false;
             bool moved = ApplyEvents(ref linkUp) | ApplySide();
             bool all = changed || followUp || forced || !_scanned;
+            // The user turned a device's reading off or on: the asked devices are gone over at once, so the listeners let go of
+            // a device turned off and its entry loses its level now, not at the next interval.
+            var off = DeviceReadSwitches.Off;
+            bool switched = !ReferenceEquals(off, _offSeen); _offSeen = off;
             bool logitech = all || linkUp || Due(_logitechAt, DevicePolling.Logitech);
-            bool ask = all || Due(_askAt, DevicePolling.Ask);
+            bool ask = all || switched || Due(_askAt, DevicePolling.Ask);
             // Listened to only while a PlayStation controller is there; a new one is found by the next full pass.
             bool listen = all || _current.TryGetValue(DeviceSource.Sony, out var sony) && sony.Count > 0 && Due(_listenAt, DevicePolling.Listen);
             if (logitech || ask || listen)
@@ -263,7 +278,9 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 if (ask) _askAt = now;
                 if (listen) _listenAt = now;
                 _scanned = true;
-                if (logitech) { _indices = _logitech.BatteryIndices(); _events?.Watch([.. _logitech.Groups]); }
+                if (logitech) _indices = _logitech.BatteryIndices();
+                // A receiver whose reading the user turned off is not listened to either, from the next pass on.
+                _events?.Watch([.. _logitech.Groups.Where(group => !DeviceReadSwitches.IsOff(Devices.Hardware(group.Long.Vendor, group.Long.Product)))]);
             }
             // A pass that failed as a whole reports nothing: the last readings stay.
             if (moved && _demand != DeviceDemand.None && !_disposed) Publish();
@@ -271,7 +288,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         }
         else
         {
-            _infos.Clear(); _logitech.Clear(); _lastRead.Clear(); _slow.Clear(); _current.Clear(); _pending.Clear(); _indices = [];
+            // _seen and _readAs stay: a device there when the page closed has not arrived anew when it opens again.
+            _infos.Clear(); _logitech.Clear(); _lastRead.Clear(); _slow.Clear(); _current.Clear(); _pending.Clear(); _indices = []; _hardware = new(StringComparer.OrdinalIgnoreCase);
             _side.Clear(); _sideQueue.Clear();
             _listed = false; _scanned = false; _followUps = 0; _logitechAt = _askAt = _listenAt = Never;
             StopListeners();
@@ -335,7 +353,9 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             else if (list[same].Asleep && !device.Asleep) list[same] = device;
         }
         var paths = Hid.Paths();
-        var before = _infos.Values.Select(info => Devices.Hardware(info.Vendor, info.Product)).Distinct().ToList();
+        // Windows listing no HID collection at all (a machine always has some) is a listing that failed: the last readings stay,
+        // and no device counts as gone or come.
+        if (paths.Count == 0 && _infos.Count > 0) throw new IOException("No HID collection was listed.");
         foreach (var gone in _infos.Keys.Except(paths).ToList()) _infos.Remove(gone);
         var infos = new List<HidInfo>();
         foreach (var path in paths)
@@ -351,9 +371,10 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 info = Hid.Query(path, batteries: !bluetooth);
                 if (info is not null) _infos[path] = info;
             }
-            if (info is not null) infos.Add(info);
+            if (info is not null) { Sort(info); infos.Add(info); }
         }
-        Present(infos, before);
+        _hardware = infos.Select(info => Devices.Hardware(info.Vendor, info.Product)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Present(infos);
         _passInfos = infos;
         var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Try(Func<IEnumerable<DeviceBattery>> read)
@@ -395,7 +416,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             return names;
         }
         // The ROG Omni receivers, each read as a whole (its pairing table, then its paired devices).
-        foreach (var receiver in infos.Where(info => info.Vendor == Asus.Vendor && info.Product == Asus.OmniReceiver && !info.Bluetooth && !Off(info)).GroupBy(info => GroupKey(info.Path)))
+        foreach (var receiver in infos.Where(info => info.Vendor == Asus.Vendor && info.Product == Asus.OmniReceiver && !info.Bluetooth && !Off(info)).GroupBy(info => info.Group))
             if (ask) Try(() => ReadOmni([.. receiver], claimed)); else foreach (var each in receiver) claimed.Add(each.Path);
         foreach (var info in infos)
         {
@@ -409,22 +430,24 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             if (Headsets.Find(info.Vendor, info.Product) is { } headset) { if (Matches(info, Headsets.Channel(headset))) Try(() => ReadHeadset(headset, info, claimed, infos)); continue; }
             // AJAZZ shares Inphic's vendor ids: it does not stand aside for Inphic's software. A receiver whose mouse has answered on
             // one collection is not asked again on its others (G-Wolves' receiver has more than one that would take the request).
-            if (Dongle(info) is { } dongle)
+            if (info.Dongle is { } dongle)
             {
-                if (!answered.Contains(GroupKey(info.Path)) && (Dongles.IsAjazz(info.Vendor, info.Product) || !Aside(info.Vendor)))
+                if (!answered.Contains(info.Group) && (Dongles.IsAjazz(info.Vendor, info.Product) || !Aside(info.Vendor)))
                 {
                     Try(() => dongle(info, claimed));
-                    if (claimed.Contains(info.Path)) answered.Add(GroupKey(info.Path));
+                    if (claimed.Contains(info.Path)) answered.Add(info.Group);
                 }
             }
             // The brands declared as families (BrandFamilies), on their dongles and cables: the reads each collection takes.
-            else if (!info.Bluetooth && BrandFamilies.Find(Shape(info)) is { Ways.Count: > 0 } brand && !answered.Contains(GroupKey(info.Path))
+            else if (info.Brand is { Ways.Count: > 0 } brand && !answered.Contains(info.Group)
                 && !(brand.Family.StandAsideFor.Count > 0 && (familyAside ??= Running()).Overlaps(brand.Family.StandAsideFor)))
             {
                 Try(() => ReadBrand(info, claimed, brand.Family, brand.Ways));
-                if (claimed.Contains(info.Path)) answered.Add(GroupKey(info.Path));
+                if (claimed.Contains(info.Path)) answered.Add(info.Group);
             }
         }
+        // Every pass, so a device turned off is never carried over with its last level by a pass of another kind.
+        ListOff(found);
         if (ask) ListUnread(infos, claimed, found);
         // The receivers that send their battery unasked are listened to all the time (PushEvents), and Corsair's receivers are
         // read on a thread of their own (CorsairReader): this pass only hands them their collections, and lists the readings
@@ -432,20 +455,21 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         var pushes = new List<PushEvents.Collection>();
         var corsair = new List<HidInfo>();
         // A Corsair receiver without the 0xFF42 collection is tried on its other vendor collections (as HaloBattery does).
-        var bragi = infos.Where(info => Corsair.Find(info.Vendor, info.Product) is not null && Corsair.Collection(info.UsagePage)).Select(info => GroupKey(info.Path)).ToHashSet();
+        var bragi = infos.Where(info => Corsair.Find(info.Vendor, info.Product) is not null && Corsair.Collection(info.UsagePage)).Select(info => info.Group).ToHashSet();
         foreach (var info in infos.Where(info => !claimed.Contains(info.Path) && !info.Bluetooth && !Off(info)))
         {
             if (Pushes.Find(info.Vendor, info.Product, info.UsagePage, info.Usage, info.Interface, info.InputLength) is { } kind) pushes.Add(new(info, kind));
             else if (Corsair.Find(info.Vendor, info.Product) is not null
-                && (Corsair.Collection(info.UsagePage) || !bragi.Contains(GroupKey(info.Path)) && info.UsagePage >= 0xFF00)) corsair.Add(info);
+                && (Corsair.Collection(info.UsagePage) || !bragi.Contains(info.Group) && info.UsagePage >= 0xFF00)) corsair.Add(info);
             else continue;
             claimed.Add(info.Path);
         }
         _pushes?.Watch(pushes);
         _corsair?.Watch(corsair);
+        // A helper's reading stands while its device is there and read; one turned off is listed without a level (ListOff).
         foreach (var (origin, device) in _side.ToList())
         {
-            if (!Attached(device)) { _side.Remove(origin); continue; }
+            if (!Attached(device) || device.Hardware is { } hardware && DeviceReadSwitches.IsOff(hardware)) { _side.Remove(origin); continue; }
             Add(device);
         }
         // The standard battery usages, on whatever no vendor protocol read. Bluetooth collections are left out (their level comes
@@ -498,16 +522,46 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
 
         // A device that missed one reading (asleep for a moment, busy with its own software) keeps its last one, not charging,
         // until the next pass of its kind; missing twice, it is gone.
-        foreach (var list in found.Values) foreach (var device in list) _lastRead[device.Key] = (device, 0);
+        var seen = new HashSet<string>(found.Values.SelectMany(list => list).Select(device => device.Key));
+        foreach (var list in found.Values)
+            foreach (var device in list)
+            {
+                _lastRead[device.Key] = (device, 0);
+                if (device is { Hardware: { } hardware, Percent: not null }) _readAs[hardware] = device;
+            }
         foreach (var (key, (device, missed)) in _lastRead.ToList())
         {
-            if (!read.Contains(device.Source) || found.Values.SelectMany(list => list).Any(seen => seen.Key == key)) continue;
+            if (!read.Contains(device.Source) || seen.Contains(key)) continue;
             if (missed >= 1 || !Present(key)) { _lastRead.Remove(key); continue; }
             _lastRead[key] = (device, missed + 1);
             Add(device with { Charging = false });
         }
         if (ask) DropShadowed();
         foreach (var source in read) _current[source] = found.TryGetValue(source, out var list) ? list : [];
+        // A device just turned off is listed under its key once (ListOff): a source not read this pass lets its entry go.
+        if (DeviceReadSwitches.Off.Count > 0)
+            foreach (var (source, list) in _current)
+                if (!read.Contains(source)) list.RemoveAll(device => device.Hardware is { } hardware && DeviceReadSwitches.IsOff(hardware) && !(source == DeviceSource.Hid && _offKeys.Contains(device.Key)));
+    }
+
+    // The keys listed this pass as turned off (ListOff).
+    private readonly HashSet<string> _offKeys = [];
+    // The devices the user turned reading off for that are here (one of their collections is): each under the key, name and
+    // kind its settings remember, without a level. ListUnread then passes over them.
+    private void ListOff(Dictionary<DeviceSource, List<DeviceBattery>> found)
+    {
+        _offKeys.Clear();
+        if (DeviceReadSwitches.Off.Count == 0) return;
+        var listed = DeviceReadSwitches.Devices.Where(device => !device.Read).ToList();
+        foreach (var device in listed)
+        {
+            // A key the unread listing gave ("hid:") stands aside for one the device was read under.
+            if (!_hardware.Contains(device.Hardware) || device.Key.StartsWith("hid:", StringComparison.Ordinal)
+                && listed.Any(other => other.Hardware == device.Hardware && !other.Key.StartsWith("hid:", StringComparison.Ordinal))) continue;
+            if (!_offKeys.Add(device.Key)) continue;
+            if (!found.TryGetValue(DeviceSource.Hid, out var list)) found[DeviceSource.Hid] = list = [];
+            list.Add(new DeviceBattery(device.Key, device.Name, device.Kind, DeviceSource.Hid, null) { Hardware = device.Hardware });
+        }
     }
     // The brands whose software is running, from one snapshot of the process names (nothing is opened or allocated per process).
     private static HashSet<DeviceBrand> RunningSoftware()
@@ -523,27 +577,40 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private void ListUnread(List<HidInfo> infos, HashSet<string> claimed, Dictionary<DeviceSource, List<DeviceBattery>> found)
     {
         var read = found.Values.SelectMany(list => list).Select(device => device.Hardware).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in infos.Where(info => !info.Bluetooth && (Dongle(info) is not null || BrandFamilies.Find(Shape(info)) is not null)).GroupBy(info => GroupKey(info.Path)))
+        foreach (var group in infos.Where(info => !info.Bluetooth && (info.Dongle is not null || info.Brand is not null)).GroupBy(info => info.Group))
         {
             if (group.Any(info => claimed.Contains(info.Path))) continue;
             var info = group.First();
-            string hardware = Devices.Hardware(info.Vendor, info.Product), key = Key("hid", info);
-            if (read.Contains(hardware) || _lastRead.Values.Any(last => last.Device.Hardware == hardware && last.Device.Key != key)) continue;
-            var kind = info.Vendor == Dongles.MchoseVendor ? Dongles.MchoseKind(info.Product, info.ProductName)
-                : Devices.Named(info.ProductName) ?? group.Select(each => BrandFamilies.Find(Shape(each))?.Family.Kind(Shape(each))).FirstOrDefault(found => found is not null);
+            string hardware = Devices.Hardware(info.Vendor, info.Product);
+            // A reading of the device from the last pass is carried through this one (Scan) rather than replaced.
+            if (read.Contains(hardware) || _lastRead.Values.Any(last => last.Missed == 0 && last.Device.Percent is not null && last.Device.Hardware == hardware)) continue;
+            // Under the key, name and kind it was read under, this run or an earlier one (DeviceReadSwitches.Remembered), so it
+            // stays the device the user knows, with its place and choices, while it gives no reading.
+            DeviceBattery? before = _readAs.TryGetValue(hardware, out var known) ? known : null;
+            var remembered = before is null ? DeviceReadSwitches.Remembered(hardware) : null;
+            string key = before?.Key ?? remembered?.Key ?? Key("hid", info);
+            var kind = before?.Kind ?? remembered?.Kind ?? (info.Vendor == Dongles.MchoseVendor ? Dongles.MchoseKind(info.Product, info.ProductName)
+                : Devices.Named(info.ProductName) ?? group.Select(each => each.Brand?.Family.Kind(Shape(each))).FirstOrDefault(each => each is not null)) ?? DeviceKind.Other;
+            string name = before?.Name ?? remembered?.Name ?? NameOf(info, hardware);
             if (!found.TryGetValue(DeviceSource.Hid, out var list)) found[DeviceSource.Hid] = list = [];
-            list.Add(new DeviceBattery(key, NameOf(info, hardware), kind ?? DeviceKind.Other, DeviceSource.Hid, null) { Hardware = hardware });
+            list.Add(new DeviceBattery(key, name, kind, DeviceSource.Hid, null) { Hardware = hardware });
             read.Add(hardware);
         }
     }
+    // The last reading of each hardware a dongle or family reader gave this run, for the key it is listed under unread.
+    private readonly Dictionary<string, DeviceBattery> _readAs = new(StringComparer.OrdinalIgnoreCase);
 
     // Whether a collection still present belongs to the device a key names (its vendor and product are in the key; a Logitech
     // device's key names its unit, so any Logitech collection will do).
-    private static bool KeyOwner(HidInfo info, string key) => key.Contains($"{info.Vendor:X4}:{info.Product:X4}", StringComparison.Ordinal);
+    private bool KeyOwner(string key)
+    {
+        foreach (var hardware in _hardware) if (key.Contains(hardware, StringComparison.Ordinal)) return true;
+        return false;
+    }
     // A Logitech device's key names its unit, not its receiver: it is present while the receiver it was read through is.
     private bool Present(string key) => key.StartsWith("logitech:", StringComparison.Ordinal)
-        ? _logitech.Receiver(key) is { } group && _infos.Keys.Any(path => GroupKey(path) == group)
-        : _infos.Values.Any(info => KeyOwner(info, key));
+        ? _logitech.Receiver(key) is { } group && _infos.Values.Any(info => info.Group == group)
+        : KeyOwner(key);
 
     // Whether a reader here speaks to a vendor and product over Bluetooth (from the path, before it is opened): PlayStation
     // controllers, the headsets and Razer's models. Logitech's Bluetooth collections carry HID++ on a page the receiver reader
@@ -561,12 +628,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     // device, still switched off. The price: two receivers of one model without serials are listed as one device.
     private static string Key(string prefix, HidInfo info)
         => $"{prefix}:{info.Vendor:X4}:{info.Product:X4}" + (info.Serial.Length > 0 ? ":" + info.Serial : AddressOf(info) is { } address ? ":" + address : "");
-    internal static string GroupKey(string path)
-    {
-        var p = System.Text.RegularExpressions.Regex.Replace(path.ToLowerInvariant(), "&col[0-9a-f]+", "");
-        p = System.Text.RegularExpressions.Regex.Replace(p, "&mi_[0-9a-f]+", "");
-        return System.Text.RegularExpressions.Regex.Replace(p, @"&[0-9a-f]{4}#\{", "#{");
-    }
+    // Every collection of one device has the same (HidInfo.Group caches it).
+    internal static string GroupKey(string path) => Hid.Group(path);
     private static string NameOf(HidInfo info, string fallback) => info.ProductName.Length > 0 ? info.ProductName : fallback;
     private static string? AddressOf(HidInfo info) => info.Bluetooth ? Devices.AddressIn(info.Path) : null;
 
@@ -624,7 +687,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         // Where the reply can come on another collection of the interface, those are read as well (Headsets.ReadsSiblings).
         var listeners = new List<HidDevice> { device };
         if (Headsets.ReadsSiblings(kind))
-            foreach (var other in infos.Where(other => other.Path != info.Path && other.Interface == info.Interface && GroupKey(other.Path) == GroupKey(info.Path) && other.InputLength > 0))
+            foreach (var other in infos.Where(other => other.Path != info.Path && other.Interface == info.Interface && other.Group == info.Group && other.InputLength > 0))
                 try { listeners.Add(new HidDevice(other) { StripZero = true }); } catch { }
         try
         {
@@ -807,59 +870,107 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
 
     // The collections of the current pass, for a reader that needs a sibling of the collection it is given (CompxSplit).
     private static volatile List<HidInfo> _passInfos = [];
-    // Every present device's collections ("VVVV:PPPP|page:usage:interface"), set at each pass, for DeviceReadBook.Plan.
+    // Every present device's collections ("VVVV:PPPP|page:usage:interface:collection"), set at each pass, for DeviceReadBook.Plan.
     private static volatile HashSet<string> _present = new(StringComparer.OrdinalIgnoreCase);
-    // The first tries of a read on a device, by device: when and which; a device gone just after one was harmed by it.
-    private static readonly Dictionary<string, (long At, string Way)> Probed = new(StringComparer.OrdinalIgnoreCase);
-    private const long ProbeHarmMs = 3000;
-    internal static string Collection(HidInfo info) => $"{info.UsagePage:X4}:{info.Usage:X4}:{info.Interface}";
+    // The devices ("VVVV:PPPP") there at the last pass. Kept while the page is closed: a device there then is not new when it
+    // opens again, so its reads are not tried afresh each time it opens.
+    private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+    // When each USB device last lost a collection (the watcher's Removed), and when each came during this run (Present).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> Removals = new(StringComparer.OrdinalIgnoreCase),
+        ArrivedAt = new(StringComparer.OrdinalIgnoreCase);
+    // The first tries of reads: on which device, which read, and when it was sent and when it ended. A device that loses a
+    // collection while one is under way or within ProbeHarmMs of its end was harmed by it (a firmware that resets on it); a
+    // device that has just come is not tried for SettleMs (Windows may still be setting it up, dropping a collection on the way).
+    private sealed record Tried(string Device, string Way, long Start, long End);
+    private static readonly List<Tried> Probed = [];
+    private const long ProbeHarmMs = 3000, ProbeKeepMs = 15_000, SettleMs = 5000;
+    internal static string Collection(HidInfo info) => $"{info.UsagePage:X4}:{info.Usage:X4}:{info.Interface}:{info.Collection}";
 
     // Asks a collection the reads DeviceReadBook plans out of ways (the brand's reads this collection takes, in order): the
     // kept one alone, or each in turn while it is being found. ask: one read on the collection, null when it was not answered;
-    // a read the collection refuses (a report it does not have) throws and counts as not answered. A first try runs under the
-    // mark on disk (DeviceReadStore.Probe). Null when no read answered; the device stays unread, never stopped, for that.
+    // a read that throws (a report the collection refuses, a reply its parser cannot take) counts as not answered. A first try
+    // runs under the mark on disk (DeviceReadStore.Probe). The device gone half way (it cannot be opened or written any more),
+    // no other read is tried on it. Null when no read answered; the device stays unread, never stopped, for that.
     private static (BatteryRead Read, string? Model, string Way)? Family(HidInfo info, IReadOnlyList<string> ways, Func<string, (BatteryRead Read, string? Model)?> ask)
     {
         string device = Devices.Hardware(info.Vendor, info.Product), collection = Collection(info);
         if (ways.Count == 0 || DeviceReadSwitches.IsOff(device)) return null;
         var book = DeviceReadStore.Book;
-        var entry = book.Entry(device);
-        bool keptPresent = entry?.Collection is { } kept && _present.Contains(device + "|" + kept);
-        var plan = book.Plan(device, collection, ways, Environment.TickCount64, keptPresent);
+        bool keptPresent = book.KeptCollection(device) is { } kept && _present.Contains(device + "|" + kept);
+        long now = Environment.TickCount64;
+        var plan = book.Plan(device, collection, ways, now, keptPresent);
         if (plan.Ways.Count == 0) return null;
+        if (plan.Kind == DeviceReadBook.Kind.Probe && ArrivedAt.TryGetValue(device, out var came) && now - came < SettleMs) return null;
+        // In a check of a kept read gone quiet, another read that finds the device asleep tells why it is quiet, not that it
+        // reads the device better: the kept read stays, and the device shows asleep.
+        (BatteryRead Read, string? Model, string Way)? asleep = null;
         foreach (var way in plan.Ways)
         {
-            bool first = way != entry?.Way;
+            bool first = way != plan.Kept;
+            long start = Environment.TickCount64;
             (BatteryRead Read, string? Model)? answer;
+            bool gone = false;
             try { answer = first ? DeviceReadStore.Probe(device, way, () => ask(way)) : ask(way); }
-            catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException or IOException) { answer = null; }
-            if (first) lock (Probed) Probed[device] = (Environment.TickCount64, way);
+            catch (Exception error) when (error is not OutOfMemoryException) { answer = null; gone = Gone(error); }
+            // A read that found the device already gone did not reach it: the one before it (if any) is what a loss follows.
+            if (gone) return asleep;
+            if (first) lock (Probed) Probed.Add(new(device, way, start, Environment.TickCount64));
             if (answer is not { } found) continue;
+            if (plan.Kind == DeviceReadBook.Kind.Recheck && way != plan.Kept && found.Read is { Percent: null, Asleep: true }) { asleep ??= (found.Read, found.Model, way); continue; }
             book.Answered(device, collection, way, DateTimeOffset.Now);
             return (found.Read, found.Model, way);
         }
         book.Silent(device, collection, plan.Kind, Environment.TickCount64);
-        return null;
+        return asleep;
     }
+    // The collection is no longer there: not found, or the device not connected any more.
+    private static bool Gone(Exception error) => error is System.ComponentModel.Win32Exception { NativeErrorCode: 2 or 3 or 1167 or 1617 };
 
-    // At each pass: the devices now present, the ones that came anew (their reads may be tried again), and the ones gone just
-    // after a first try (that read harmed them: a firmware that resets on it).
-    private void Present(List<HidInfo> infos, IEnumerable<string> before)
+    // At each pass: the devices now present, the ones that came anew (their reads may be tried again), and the ones that lost
+    // a collection during a first try or just after it (that read harmed them). The watcher's time of the loss decides which
+    // read it followed; without it (no watcher), a device gone from the listing counts as lost now.
+    private void Present(List<HidInfo> infos)
     {
-        var devices = infos.Select(info => Devices.Hardware(info.Vendor, info.Product)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var old = before.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var devices = _hardware;
         var book = DeviceReadStore.Book;
-        foreach (var device in devices.Where(device => !old.Contains(device))) book.Arrived(device);
+        long now = Environment.TickCount64;
+        bool first = _seen.Count == 0;
+        foreach (var device in devices)
+            if (!_seen.Contains(device))
+            {
+                book.Arrived(device);
+                // The devices there at the first pass have not just been plugged in.
+                if (!first) ArrivedAt[device] = now;
+            }
         lock (Probed)
         {
-            long now = Environment.TickCount64;
-            foreach (var (device, (at, way)) in Probed.ToList())
+            var harmed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tries in Probed.GroupBy(tried => tried.Device, StringComparer.OrdinalIgnoreCase))
             {
-                if (now - at > ProbeHarmMs) { Probed.Remove(device); continue; }
-                if (old.Contains(device) && !devices.Contains(device)) { book.Harmed(device, way); Probed.Remove(device); }
+                long lost;
+                if (Removals.TryGetValue(tries.Key, out var removed)) lost = removed;
+                else if (_seen.Contains(tries.Key) && !devices.Contains(tries.Key)) lost = now;
+                else continue;
+                var culprit = tries.Where(tried => tried.Start <= lost && lost <= tried.End + ProbeHarmMs).MaxBy(tried => tried.Start);
+                if (culprit is null) continue;
+                book.Harmed(culprit.Device, culprit.Way);
+                harmed.Add(culprit.Device);
             }
+            Probed.RemoveAll(tried => harmed.Contains(tried.Device) || now - tried.End > ProbeKeepMs);
         }
+        foreach (var (device, at) in Removals) if (now - at > ProbeKeepMs) Removals.TryRemove(device, out _);
+        foreach (var (device, at) in ArrivedAt) if (now - at > SettleMs) ArrivedAt.TryRemove(device, out _);
+        _seen.Clear(); _seen.UnionWith(devices);
         _present = infos.Select(info => Devices.Hardware(info.Vendor, info.Product) + "|" + Collection(info)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Which reader takes a collection: worked out once, when it is first listed (its attributes do not change).
+    private static void Sort(HidInfo info)
+    {
+        if (info.Sorted) return;
+        info.Dongle = Dongle(info);
+        info.Brand = info.Dongle is null && !info.Bluetooth ? BrandFamilies.Find(Shape(info)) : null;
+        info.Sorted = true;
     }
 
     // ----- Brand families (BrandFamilies): the reads each brand declares, run as it says -----
@@ -876,8 +987,9 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return [Mouse(family.Prefix, info, family.Brand, found.Read, family.Kind(shape) ?? DeviceKind.Other, family.DisplayName(shape))];
     }
 
-    // One read as its family declares it (BrandWay): its frames before, its gate, the request and the answer, its frames after.
-    // Null when it was not answered; a report the collection refuses throws (Family counts it as not answered).
+    // One read as its family declares it (BrandWay): its frames before, its gate, the request and the answer, its charging
+    // question, its frames after. Null when it was not answered; a report the collection refuses throws (Family counts it as
+    // not answered).
     // A read with MinIntervalMs: asked once in that time, answered or not; between, its last answer stands (none if it gave none).
     private static readonly Dictionary<string, (long At, BatteryRead? Read)> Spaced = new(StringComparer.OrdinalIgnoreCase);
     private static BatteryRead? Run(HidInfo info, BrandWay way)
@@ -888,7 +1000,17 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 if (Spaced.TryGetValue(spacedKey, out var last) && Environment.TickCount64 - last.At < way.MinIntervalMs) return last.Read;
         BatteryRead? read = null;
         try { read = RunNow(info, way); }
-        finally { if (way.MinIntervalMs > 0) lock (Spaced) Spaced[spacedKey] = (Environment.TickCount64, read); }
+        finally
+        {
+            if (way.MinIntervalMs > 0)
+                lock (Spaced)
+                {
+                    long now = Environment.TickCount64;
+                    // Entries whose interval has long passed (a collection gone, its path new) are let go.
+                    if (Spaced.Count > 64) foreach (var (key, (at, _)) in Spaced.ToList()) if (now - at > 3_600_000) Spaced.Remove(key);
+                    Spaced[spacedKey] = (now, read);
+                }
+        }
         return read;
     }
 
@@ -901,57 +1023,55 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             if (!feature) { device.Write(frame); return; }
             if (!device.SetFeature(frame)) throw new IOException("The feature report was refused.");
         }
+        int inputLength = Math.Max(2, info.InputLength);
+        // One question (the gate, the request or the charging question) and its answer, as the read's transport has it
+        // (BrandWay.Step); parse gives null for any other report.
+        T? Ask<T>(byte[] question, Func<byte[], T?> parse) where T : struct
+        {
+            switch (way.Step)
+            {
+                case WayStep.SetThenGet:
+                {
+                    Send(question);
+                    Thread.Sleep(way.GapMs);
+                    return device.GetFeature(question[0], way.GetLength(question, device.FeatureLength)) is { } reply ? parse(reply) : null;
+                }
+                case WayStep.Get:
+                    return device.GetFeature(question[0], way.GetLength(question, device.FeatureLength)) is { } got ? parse(got) : null;
+                case WayStep.WriteThenFetch:
+                    return GetInputExchange.Run(() => device.GetInput(way.ReplyId, inputLength), () => Send(question), parse, way.TimeoutMs, way.GapMs,
+                        Thread.Sleep, () => Environment.TickCount64);
+                default:
+                {
+                    Action send = way.Step == WayStep.Listen ? () => { } : () => Send(question);
+                    return Hid.Transact<object>([device], send, r => parse(r) is { } value ? (object)value : null, way.TimeoutMs) is T answer ? answer : null;
+                }
+            }
+        }
         try
         {
             foreach (var frame in way.Before) { Send(frame); Thread.Sleep(way.GapMs); }
-            if (way.Gate is { } gate && way.Gated is { } gated)
+            // The gate the same way as the request: a feature read's gate is set and got back as a feature report.
+            if (way.Gate is { Length: > 0 } gate && way.Gated is { } gated)
             {
-                var answer = Hid.Transact<object>([device], () => Send(gate), r => gated(r) is { } on ? on : null, way.TimeoutMs);
-                if (answer is not bool linked) return null;
+                if (Ask(gate, gated) is not { } linked) return null;
                 if (!linked) return new BatteryRead(null, Asleep: true);
             }
-            for (int attempt = 0; attempt < Math.Max(1, way.Attempts); attempt++)
+            BatteryRead? read = null;
+            for (int attempt = 0; attempt < Math.Max(1, way.Attempts) && read is null; attempt++)
             {
                 if (attempt > 0) Thread.Sleep(way.GapMs);
-                switch (way.Transport)
-                {
-                    case WayTransport.Feature:
-                    {
-                        Send(way.Request);
-                        Thread.Sleep(way.GapMs);
-                        int length = way.FeatureLength > 0 ? way.FeatureLength : Math.Max(way.Request.Length, device.FeatureLength);
-                        if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
-                        continue;
-                    }
-                    case WayTransport.FeatureGet:
-                    {
-                        int length = way.FeatureLength > 0 ? way.FeatureLength : device.FeatureLength;
-                        if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
-                        continue;
-                    }
-                    case WayTransport.OutputGetInput:
-                    {
-                        int length = Math.Max(2, info.InputLength);
-                        var stale = device.GetInput(way.ReplyId, length);
-                        Send(way.Request);
-                        long deadline = Environment.TickCount64 + way.TimeoutMs;
-                        while (Environment.TickCount64 < deadline)
-                        {
-                            Thread.Sleep(Math.Max(10, way.GapMs));
-                            if (device.GetInput(way.ReplyId, length) is not { } reply || stale is not null && reply.AsSpan().SequenceEqual(stale)) continue;
-                            if (way.Parse(reply) is { } read) return read;
-                        }
-                        continue;
-                    }
-                    default:
-                    {
-                        Action send = way.Transport == WayTransport.Listen ? () => { } : () => Send(way.Request);
-                        if (Hid.Transact<object>([device], send, r => way.Parse(r) is { } b ? b : null, way.TimeoutMs) is BatteryRead answer) return answer;
-                        continue;
-                    }
-                }
+                read = Ask(way.Request, way.Parse);
             }
-            return null;
+            // The charging question only once the level came, and never where nothing is to be sent.
+            if (read is { Percent: not null } level && way.Then is { Length: > 0 } then && way.Charging is { } charging && way.Transport != WayTransport.Listen)
+            {
+                bool? state = null;
+                try { state = Ask(then, charging); }
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException or IOException) { }
+                read = BrandWay.WithCharging(level, state);
+            }
+            return read;
         }
         finally
         {
@@ -1049,8 +1169,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private static IEnumerable<DeviceBattery> CompxSplit(HidInfo info, HashSet<string> claimed)
     {
         if (Dongles.CompxSplitFind(info.Vendor, info.Product) is not { } model) return [];
-        string group = GroupKey(info.Path);
-        var replyInfo = _passInfos.FirstOrDefault(other => other.Vendor == info.Vendor && other.Product == info.Product && GroupKey(other.Path) == group
+        string group = info.Group;
+        var replyInfo = _passInfos.FirstOrDefault(other => other.Vendor == info.Vendor && other.Product == info.Product && other.Group == group
             && Dongles.CompxSplitReply(other.UsagePage, other.Usage, other.InputLength));
         if (replyInfo is null) return [];
         if (Family(info, ["compx.split"], _ => SplitAsk(model, info, replyInfo) is { } read ? (read, null) : null) is not { } found) return [];
@@ -1099,21 +1219,27 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return [Mouse("mchose", info, "MCHOSE", answer.Read, preferredName: Dongles.MchoseRealtekModel(answer.Model))];
     }
 
-    // The RealTek exchange: the short report first, then the long one, each asked afresh before every read.
+    // The RealTek exchange: the short report first, then the long one (only those the collection declares, when its report ids
+    // are known), each asked afresh before every read. A reply that says the mouse is asleep is kept while the other asks go on
+    // (an awake mouse's answer comes in about one exchange in two), and stands only when none gives a level.
     private static (BatteryRead Read, int Model)? RealtekAsk(HidInfo info)
     {
         using var device = new HidDevice(info);
+        (BatteryRead Read, int Model)? asleep = null;
         foreach (bool longReport in new[] { false, true })
         {
             var request = Dongles.MchoseRealtekRequest(longReport);
+            if (info.FeatureIds.Count > 0 && !info.FeatureIds.Contains(request[0])) continue;
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 if (!device.SetFeature(request)) break;
                 Thread.Sleep(120);
-                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is { } reply && Dongles.MchoseRealtekBattery(reply) is { } answer) return answer;
+                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is not { } reply || Dongles.MchoseRealtekBattery(reply) is not { } answer) continue;
+                if (!answer.Read.Asleep) return answer;
+                asleep = answer;
             }
         }
-        return null;
+        return asleep;
     }
 
     // The MCHOSE keyboards on 41E4:2001 (Dongles.MchoseKeyboardRequest): the command written, the answer read off the input
@@ -1284,7 +1410,8 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     {
         private const int TimeoutMs = 400, PingTimeoutMs = 1500;
         // Legacy: a HID++ 1.0 device, read through its registers.
-        private sealed class Slot { public string Key = "", Name = ""; public bool Legacy; public DeviceKind Kind = DeviceKind.Other; public readonly Dictionary<int, byte> Features = []; public byte[]? Capabilities; public DeviceBattery? Last; public long LastAt; }
+        // Hardware: the receiver's or cable's vendor and product, which the read switch stops (DeviceReadSwitches).
+        private sealed class Slot { public string Key = "", Name = "", Hardware = ""; public bool Legacy; public DeviceKind Kind = DeviceKind.Other; public readonly Dictionary<int, byte> Features = []; public byte[]? Capabilities; public DeviceBattery? Last; public long LastAt; }
         // A device that sleeps between readings (a mouse left alone) keeps its last level this long, as asleep and not charging: a
         // device that charges on its cable is powered and answers, so a reading taken while it charged (a mouse just unplugged,
         // which sleeps at once) does not say it still does.
@@ -1301,21 +1428,23 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         public IEnumerable<DeviceBattery> Read(List<HidInfo> collections, HashSet<string> claimed)
         {
             var found = new List<DeviceBattery>();
-            var shorts = collections.Where(info => info.UsagePage == 0xFF00 && info.Usage == 0x0001).GroupBy(info => GroupKey(info.Path)).ToDictionary(g => g.Key, g => g.First());
+            var shorts = collections.Where(info => info.UsagePage == 0xFF00 && info.Usage == 0x0001).GroupBy(info => info.Group).ToDictionary(g => g.Key, g => g.First());
             Groups.Clear();
             // A headset's one collection is its long one (Hidpp.HeadsetCollection); it has no short one.
             foreach (var longInfo in collections.Where(info => info.UsagePage == 0xFF00 ? info.Usage == 0x0002 : Hidpp.HeadsetCollection(info.UsagePage, info.Usage, info.InputLength, info.OutputIds)))
             {
-                string group = GroupKey(longInfo.Path);
+                string group = longInfo.Group;
                 shorts.TryGetValue(group, out var shortInfo);
-                Groups.Add(new HidppEvents.Group(group, longInfo, shortInfo, Hidpp.IsReceiver(longInfo.Product, longInfo.ProductName)));
+                // A G headset's dongle (its 0xFF43 collection) is its headset's alone, whatever its name says: only slot 0xFF.
+                bool receiver = longInfo.UsagePage == 0xFF00 && Hidpp.IsReceiver(longInfo.Product, longInfo.ProductName);
+                Groups.Add(new HidppEvents.Group(group, longInfo, shortInfo, receiver));
                 Channel channel;
                 try { channel = new Channel(longInfo, shortInfo); }
                 catch { continue; }
                 using (channel)
                 {
                     claimed.Add(longInfo.Path); if (shortInfo is not null) claimed.Add(shortInfo.Path);
-                    foreach (var index in Hidpp.Indices(Hidpp.IsReceiver(longInfo.Product, longInfo.ProductName)))
+                    foreach (var index in Hidpp.Indices(receiver))
                     {
                         DeviceBattery? device;
                         // A failed write or read (the receiver pulled out half way) costs this slot its reading, not the others'.
@@ -1343,7 +1472,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 if (channel.HeadsetRegister(index, 0x0D) is not { } battery) return Remembered(slot is { Legacy: true } ? slot : null);
                 string name = info.ProductName.Length > 0 ? info.ProductName : "Logitech G535";
                 var read = new DeviceBattery($"logitech:{info.Product:X4}:{index}", name, DeviceKind.Headphones, DeviceSource.Logitech, battery.Percent)
-                    { Charging = battery.Charging, Coarse = battery.Coarse };
+                    { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) };
                 _known[slotKey] = new Slot { Key = read.Key, Name = name, Legacy = true, Last = read, LastAt = Environment.TickCount64 };
                 return read;
             }
@@ -1372,6 +1501,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                     var identity = device.Call(Hidpp.DeviceInfo, 0);
                     string unit = identity is { Length: >= 5 } ? Convert.ToHexString(identity, 1, 4) : "";
                     device.Slot.Key = "logitech:" + (unit.Length > 0 && unit != "00000000" ? unit : $"{info.Product:X4}:{index}");
+                    device.Slot.Hardware = Devices.Hardware(info.Vendor, info.Product);
                     string name = device.ReadName();
                     device.Slot.Name = name.Length > 0 ? name : info.ProductName.Length > 0 && index == 0xFF ? info.ProductName : "Logitech #" + index;
                     device.Slot.Kind = device.ReadKind();
@@ -1392,7 +1522,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         private static DeviceBattery Take(Slot slot, BatteryRead battery)
         {
             slot.Last = new DeviceBattery(slot.Key, slot.Name, slot.Kind != DeviceKind.Other ? slot.Kind : Devices.Named(slot.Name) ?? DeviceKind.Other, DeviceSource.Logitech, battery.Percent)
-            { Charging = battery.Charging, Coarse = battery.Coarse };
+            { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = slot.Hardware.Length > 0 ? slot.Hardware : null };
             slot.LastAt = Environment.TickCount64;
             return slot.Last;
         }
@@ -1439,7 +1569,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             if (read is not { } battery) return null;
             string name = index == 0xFF && info.ProductName.Length > 0 ? info.ProductName : "Logitech #" + index;
             return new DeviceBattery($"logitech:{info.Product:X4}:{index}", name, Devices.Named(name) ?? DeviceKind.Other, DeviceSource.Logitech, battery.Percent)
-            { Charging = battery.Charging, Coarse = battery.Coarse };
+            { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) };
         }
 
         private sealed class HidppError(int code) : Exception($"HID++ error 0x{code:X2}") { public int Code { get; } = code; }

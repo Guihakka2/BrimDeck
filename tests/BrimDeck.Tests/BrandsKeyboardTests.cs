@@ -67,9 +67,9 @@ static class BrandsKeyboardTests
     {
         var control = Shape(0x05AC, 0x024F, 0xFF02, 2, 1, input: 17, output: 17, outputIds: [0x08], name: "2.4G Wireless Receiver");
         var found = BrandFamilies.Find(control);
-        check("Lofree: the Flow Lite84 receiver's control collection takes the read, with the online query sent first",
-            found is { Family.Brand: "Lofree" } && Names(found).SequenceEqual(["lofree.flow"])
-            && found.Value.Ways[0].Before.Count == 1 && found.Value.Ways[0].Before[0].SequenceEqual(BrimDeck.Core.Lofree.Request(0x03)));
+        check("Lofree: the Flow Lite84 receiver's control collection takes the read, the online query asked first as its gate",
+            found is { Family.Brand: "Lofree" } && Names(found).SequenceEqual(["lofree.flow"]) && found.Value.Ways[0].Before.Count == 0
+            && found.Value.Ways[0].Gate is { } gate && gate.SequenceEqual(BrimDeck.Core.Lofree.Request(0x03)) && found.Value.Ways[0].Gated is not null);
         // Apple's wired Aluminium Keyboard on the same ids: its keyboard, consumer and vendor collections.
         bool apple = new[] { Shape(0x05AC, 0x024F, 0x0001, 6, 0, name: "Apple Keyboard"), Shape(0x05AC, 0x024F, 0x000C, 1, 1, name: "Apple Keyboard"),
             Shape(0x05AC, 0x024F, 0xFF00, 1, 1, input: 17, output: 17, outputIds: [0x08], name: "Apple Keyboard"),
@@ -95,6 +95,12 @@ static class BrandsKeyboardTests
             && BrimDeck.Core.Lofree.Battery(Reply(0x03, 1, 0)) is null && BrimDeck.Core.Lofree.Battery(bad) is null
             && BrimDeck.Core.Lofree.Battery(Reply(0x04, 57, 0, status: 1)) is null && BrimDeck.Core.Lofree.Battery(Reply(0x04, 0, 0)) is null
             && BrimDeck.Core.Lofree.Battery(battery) is null);
+        var badOnline = Reply(0x03, 1, 0); badOnline[16] ^= 0xFF;
+        check("Lofree: the online answer lets the read go on with 1, says asleep with 0; a bad checksum, a status, the battery answer and the request read back are none",
+            BrimDeck.Core.Lofree.Online(Reply(0x03, 1, 0)) == true && BrimDeck.Core.Lofree.Online(Reply(0x03, 0, 0)) == false
+            && BrimDeck.Core.Lofree.Online(Reply(0x03, 2, 0)) is null && BrimDeck.Core.Lofree.Online(badOnline) is null
+            && BrimDeck.Core.Lofree.Online(Reply(0x03, 1, 0, status: 1)) is null && BrimDeck.Core.Lofree.Online(Reply(0x04, 1, 0)) is null
+            && BrimDeck.Core.Lofree.Online(BrimDeck.Core.Lofree.Request(0x03)) is null);
     }
 
     private static void Rongyuan(Action<string, bool> check)
@@ -145,8 +151,8 @@ static class BrandsKeyboardTests
             && BrandFamilies.Find(raw with { Interface = 4 }) is null && BrandFamilies.Find(raw with { InputLength = 65, OutputLength = 65 }) is null
             && BrandFamilies.Find(raw with { Usage = 0x62 }) is null);
         var x87 = raw with { Vendor = 0x0C45, Product = 0xFEFE, Name = "" };
-        check("Sonix: EWEADN X87's receiver on interface 3 only",
-            BrandFamilies.Find(x87) is { Family.Brand: "EWEADN" } found && Names(found).SequenceEqual(["eweadn.query"])
+        check("Sonix: EWEADN X87's receiver on interface 3 only, named by its product string (AULA's F87 Pro V2D shares 0C45:FEFE)",
+            BrandFamilies.Find(x87) is { Family.Brand: "EWEADN" } found && Names(found).SequenceEqual(["eweadn.query"]) && found.Family.DisplayName(x87) is null
             && BrandFamilies.Find(x87 with { Interface = 4, InputLength = 65, OutputLength = 65 }) is null && BrandFamilies.Find(x87 with { Interface = 4 }) is null
             && BrandFamilies.Find(x87 with { Product = 0xFEFD }) is null);
         check("Sonix: the query is 00 20 01 ... 21",

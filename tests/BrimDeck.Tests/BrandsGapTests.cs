@@ -90,16 +90,37 @@ static class BrandsGapTests
             Dongles.Find(0x2023, 0xF024, 0xFFFF, "", 65, 2, 0x0001, 0, 0) == Dongles.Protocol.F83 && Dongles.Find(0x2023, 0xF024, 0xFFFF, "", 65, 1, 0x0001, 0, 0) is null
             && Dongles.Find(0x2023, 0xF017, 0xFFFF, "", 65, 2) == Dongles.Protocol.F83 && Dongles.Find(0x2023, 0xF022, 0xFFFF, "", 65, 2) == Dongles.Protocol.F83
             && Dongles.Twins.Contains(("2023:F024", "2023:F026")));
-        var v9 = Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE V9 PRO");
-        check("MCHOSE V9 Pro: the status read on C-Media's 291D:385D only where the product names it; 00 is on its cable",
+        var v9 = Shape(0x291D, 0x385D, 0xFF90, 1, 64, 64, [0x55], "MCHOSE V9 PRO");
+        check("MCHOSE V9 Pro: the status read on C-Media's 291D:385D, only its 0xFF90 usage 1 collection and only where the product names it",
             BrandFamilies.Find(v9) is { Family.Brand: "MCHOSE V9 Pro" } found && found.Ways.Select(way => way.Name).SequenceEqual(["mchose.v9pro"])
-            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE S9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0x90FF, 1, 64, 64, [0x55], "V9 PRO")) is { Family.Brand: "MCHOSE V9 Pro" }
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF90, 1, 64, 64, [0x55], "MCHOSE S9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF82, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF90, 2, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
             && BrandFamilies.Find(Shape(0x291D, 0x385D, 0x000C, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
-            && MchoseV9Pro.Request().Length == 64 && MchoseV9Pro.Request().Take(3).SequenceEqual(new byte[] { 0x55, 0x65, 0x01 })
-            && MchoseV9Pro.Battery(Bytes("55 65 3C 00")) == new BatteryRead(60, true) && MchoseV9Pro.Battery(Bytes("55 65 14 02")) == new BatteryRead(20)
-            && MchoseV9Pro.Battery(Bytes("55 65 65 02")) is null && MchoseV9Pro.Battery(Bytes("55 11 14 02")) is null);
-        check("MCHOSE 41E4 keyboards: the high nibble of the byte after the level is charging, the low one (full) is not",
-            Dongles.MchoseKeyboardBattery(Bytes("13 4A 01 00 02 34 10 00")) == new BatteryRead(52, true) && Dongles.MchoseKeyboardBattery(Bytes("13 4A 01 00 02 64 01 00")) == new BatteryRead(100));
+            && MchoseV9Pro.Request().Length == 64 && MchoseV9Pro.Request().Take(3).SequenceEqual(new byte[] { 0x55, 0x65, 0x01 }));
+        // HaloBattery's 60 % on the cable (00) and rafagfran's 20 % on battery (02); vigil-watt's 100 % (55 65 64 02); M HUB's 03
+        // charging, 04 full and 1A asleep (aipno/mchose-linux); 0 the receiver's answer while the headset sleeps (vigil-watt).
+        check("MCHOSE V9 Pro: every state: on the cable, on battery, charging, full; asleep (1A) and level 0 asleep, never a level",
+            MchoseV9Pro.Battery(Bytes("55 65 3C 00")) == new BatteryRead(60, true) && MchoseV9Pro.Battery(Bytes("55 65 14 02")) == new BatteryRead(20)
+            && MchoseV9Pro.Battery(Bytes("55 65 64 02 00 00")) == new BatteryRead(100) && MchoseV9Pro.Battery(Bytes("55 65 55 03")) == new BatteryRead(85, true)
+            && MchoseV9Pro.Battery(Bytes("55 65 64 04")) == new BatteryRead(100)
+            && MchoseV9Pro.Battery(Bytes("55 65 50 1A")) == new BatteryRead(null, Asleep: true) && MchoseV9Pro.Battery(Bytes("55 65 00 1A")) == new BatteryRead(null, Asleep: true)
+            && MchoseV9Pro.Battery(Bytes("55 65 00 02")) == new BatteryRead(null, Asleep: true) && MchoseV9Pro.Battery(Bytes("55 65 00 00")) == new BatteryRead(null, Asleep: true));
+        check("MCHOSE V9 Pro: the request read back, a state no source documents, a level out of range and another command are none",
+            MchoseV9Pro.Battery(MchoseV9Pro.Request()) is null && MchoseV9Pro.Battery(Bytes("55 65 50 01")) is null && MchoseV9Pro.Battery(Bytes("55 65 50 0A")) is null
+            && MchoseV9Pro.Battery(Bytes("55 65 65 02")) is null && MchoseV9Pro.Battery(Bytes("55 11 14 02")) is null && MchoseV9Pro.Battery(Bytes("55 65 14")) is null);
+        static byte[] Keyboard(params byte[] head)
+        {
+            var frame = new byte[20]; head.CopyTo(frame, 0);
+            int sum = 0; for (int i = 0; i < 19; i++) sum += frame[i];
+            frame[19] = (byte)sum;
+            return frame;
+        }
+        check("MCHOSE 41E4 keyboards: the high nibble of the byte after the level is charging (10 on the cable), the low one (full) is not",
+            Dongles.MchoseKeyboardBattery(Keyboard(0x13, 0x4A, 0x01, 0x00, 0x02, 0x34, 0x10)) == new BatteryRead(52, true)
+            && Dongles.MchoseKeyboardBattery(Keyboard(0x13, 0x4A, 0x01, 0x00, 0x02, 0x64, 0x01)) == new BatteryRead(100));
     }
 
     private static void Fa09Receiver(Action<string, bool> check)
@@ -135,13 +156,16 @@ static class BrandsGapTests
             && Hidpp.G535Battery(Bytes("10 FF 05 0C 0E E9 01"), 0xFF) is null && Hidpp.G535Battery(Bytes("10 FF 05 0D 00 00 01"), 0xFF) is null
             && Hidpp.G535Battery(Bytes("10 01 05 0D 0E E9 01"), 0xFF) is null);
         var centurion = Shape(0x046D, 0x0AF7, 0xFFA0, 1, 64, 64, [0x51]);
-        check("Logitech PRO X 2 LIGHTSPEED: the legacy request on its 0xFFA0 collection; 51 0B with 04 at 8, a power notice is none",
+        check("Logitech PRO X 2 LIGHTSPEED: the legacy request on its 0xFFA0 collection (the page as measured on Windows); 51 0B with 04 at 8; a power notice with 00 at 6 the headset off, any other notice, the acknowledgement and the request read back none",
             BrandFamilies.Find(centurion) is { Family.Brand: "Logitech Centurion", Ways.Count: 1 }
             && BrandFamilies.Find(Shape(0x046D, 0x0AF8, 0xFFA0, 1, 64, 64, [0x51])) is null && BrandFamilies.Find(Shape(0x046D, 0x0AF7, 0xFF00, 2, 64, 64, [0x51])) is null
+            && BrandFamilies.Find(Shape(0x046D, 0x0AF7, 0xA0FF, 1, 64, 64, [0x51])) is null
             && LogitechCenturion.Request().Take(10).SequenceEqual(Bytes("51 08 00 03 1A 00 03 00 04 0A")) && LogitechCenturion.Request().Length == 64
             && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 04 0A 2D 00 00")) == new BatteryRead(45)
             && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 04 0A 2B 00 02")) == new BatteryRead(43, true)
-            && LogitechCenturion.Battery(Bytes("51 05 00 03 1A 00 03 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 05 0A 2B 00 02")) is null);
+            && LogitechCenturion.Battery(Bytes("51 05 00 00 00 00 00 00 00 00 00 00 00")) == new BatteryRead(null, Asleep: true)
+            && LogitechCenturion.Battery(Bytes("51 05 00 03 1A 00 03 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(Bytes("51 0B 00 03 1A 00 03 00 05 0A 2B 00 02")) is null
+            && LogitechCenturion.Battery(Bytes("51 03 00 03 1A 00 00 00 04 0A 2B 00 02")) is null && LogitechCenturion.Battery(LogitechCenturion.Request()) is null);
     }
 
     private static void Others(Action<string, bool> check)
@@ -170,11 +194,13 @@ static class BrandsGapTests
         check("Corsair: the K65 PLUS, M75 and the Void v2 family on the bragi exchange; the Void v2's measured 81 %",
             Corsair.Find(0x1B1C, 0x2B07) is { Bare: false, Kind: DeviceKind.Keyboard } && Corsair.Find(0x1B1C, 0x2A08) is { Bare: true, Session: true }
             && Corsair.Find(0x1B1C, 0x0A97) is not null && Corsair.Percent(Bytes("01 01 02 00 2A 03")) == 81 && Corsair.Find(0x1B1C, 0x2B2A) is null);
-        check("Corsair Void Elite: C9 64 on its 0xFFC5 collection; the level without the microphone bit, 4 and 5 charging, 0 no headset",
+        check("Corsair Void Elite: C9 64 on its 0xFFC5 collection; the level without the microphone bit, 1 and 2 on battery, 4 and 5 charging, 0 no headset (asleep); another status, another report or the request none",
             BrandFamilies.Find(Shape(0x1B1C, 0x0A55, 0xFFC5, 1, 5, 64, [0xC9])) is { Family.Brand: "Corsair Void", Ways.Count: 1 }
             && BrandFamilies.Find(Shape(0x1B1C, 0x0A55, 0xFF42, 1, 5, 64, [0xC9])) is null
             && CorsairVoid.Battery(Bytes("64 00 C8 B1 01")) == new BatteryRead(72) && CorsairVoid.Battery(Bytes("64 00 32 B1 05")) == new BatteryRead(50, true)
-            && CorsairVoid.Battery(Bytes("64 00 32 B1 00")) is null && CorsairVoid.Battery(Bytes("64 00 32 B2 01")) is null);
+            && CorsairVoid.Battery(Bytes("64 00 14 B1 02")) == new BatteryRead(20) && CorsairVoid.Battery(Bytes("64 00 32 B1 04")) == new BatteryRead(50, true)
+            && CorsairVoid.Battery(Bytes("64 00 32 B1 00")) == new BatteryRead(null, Asleep: true) && CorsairVoid.Battery(Bytes("64 00 32 B1 03")) is null
+            && CorsairVoid.Battery(Bytes("64 00 32 B2 01")) is null && CorsairVoid.Battery(CorsairVoid.Request()) is null);
         check("Ninjutso Sora V2 and V2 8K: the Nordic read on their 0xFFA0 collection",
             Dongles.Find(0x1915, 0xAE8A, 0xFFA0, "", 32) == Dongles.Protocol.Nordic && Dongles.Find(0x1915, 0xAE8C, 0xFFA0, "", 32) == Dongles.Protocol.Nordic
             && Dongles.Find(0x1915, 0xAE8A, 0xFF02, "", 32) is null);

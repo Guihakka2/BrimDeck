@@ -4,9 +4,9 @@ namespace BrimDeck.Core;
 // Dell's vendor id, which Dell's other devices carry too, so only this pair is taken, and only its vendor collection (usage
 // page 0xFF00, usage 1, interface 1, a 65-byte feature report with no report id). The read is the one Alienware Command Center
 // sends (USB captures): feature report 0 set to 0E A1 and zeros; the receiver answers with an input report 0E A1 <percent>
-// <state>, the state 0x04 with the cable in and 0x00 on battery. The receiver also sends state reports of its own on the
-// collection (0E 05, 0E 17, 0E 83 ...), which are not the answer. From HaloBattery's alienware.py (MIT; checked against
-// Command Center on the keyboard: 37 % and 92 %, the charging state following the cable).
+// <state>, the state 0x04 with the cable in and 0x00 on battery. Any other frame on the collection is not the answer. From
+// HaloBattery's alienware.py and its #287 (MIT; checked against Command Center on the keyboard: 37 % and 92 %, the charging
+// state following the cable; its diagnostics list the vendor collection as interface 1, ff00:0001).
 [BrandFamilies]
 public static class Alienware
 {

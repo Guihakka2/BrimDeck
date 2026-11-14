@@ -14,14 +14,16 @@ public static class MouseShapes
 
     // The 0x83 feature exchange (Sinowealth's framed query, the same envelope the existing WLmouse, G-Wolves and LAMZU reader
     // uses): feature report 0, 64 bytes, 00 00 02 02 00 83 (target 2 the mouse, length 2, bank 0, register 0x83). Read back
-    // with the report id first: [1] status (A1 answered, A4 the receiver cannot find the mouse, A0 busy, A2 failed), [3..5]
-    // target, length and bank (0), [6] 0x83, [7] charging, [8] percent. Only A1 is a reading; A4 is the mouse asleep. A percent of
-    // 0 (Glorious CORE shows it as 1 %) is taken as no reading. The request read back has 00 where the status goes.
+    // with the report id first: [1] status, [3..5] target, length and bank (0), [6] 0x83, [7] charging (1; Glorious's monitors
+    // also see 2 and 3 on the cable once charged), [8] percent. Status: A1 answered; A4 the receiver cannot find the mouse (asleep
+    // or off); A0 busy or waking up and A2 failed or waking (the sources differ; a waking mouse may answer A2 with 0 % first),
+    // A3 busy: only A1 is a reading. A percent of 0 (Glorious CORE shows it as 1 %) is taken as no reading. The request read
+    // back has 00 where the status goes.
     public static byte[] Request83() => BrandFamilies.Frame(65, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x83);
     public static BatteryRead? Battery83(byte[] r)
     {
         if (r.Length < 9 || r[0] != 0x00 || r[5] != 0x00 || r[6] != 0x83) return null;
         if (r[1] == 0xA4) return new(null, Asleep: true);
-        return r[1] == 0xA1 && r[8] is > 0 and <= 100 ? new(r[8], r[7] != 0) : null;
+        return r[1] == 0xA1 && r[8] is > 0 and <= 100 ? new(r[8], r[7] == 1) : null;
     }
 }

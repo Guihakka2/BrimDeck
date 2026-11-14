@@ -351,6 +351,10 @@ public partial class MainWindow
         }
         var totals = Values(result.Entries);
         bool incomplete = result.IncompleteProviders.Count > 0;
+        // The selected applications whose totals are the previous run's (UsageLastSeen): their rows and the total are dimmed, and the
+        // total's label says when they were read, until the new ones replace them.
+        var restored = snapshots.Where(snapshot => snapshot.LastSeenAt is not null && snapshot.UsageAvailable && _modelApps.Contains(snapshot.Id)).ToList();
+        var restoredIds = restored.Select(snapshot => snapshot.Id).ToHashSet();
         if (incomplete && result.Entries.Count == 0) totals = totals.Select(_ => "—").ToArray();
         double[] widths = expanded ? [compact ? 72 : 80, 0, ..Enumerable.Repeat(compact ? 52d : 56d, 4), compact ? 58 : 62, compact ? 64 : 78] : [84, 0, 84, 84];
         var values = result.Rows.Select(row => Values(row.Entries)).ToArray();
@@ -415,6 +419,7 @@ public partial class MainWindow
             }
             var item = new Border { Child = row, Background = Brushes.Transparent, BorderBrush = UI.Brush(Look.Hex("rowDivider")), BorderThickness = new Thickness(0, i > 0 ? 1 : 0, 0, 0) };
             item.MouseEnter += (_, _) => item.Background = UI.Brush(Look.Hex("rowHover")); item.MouseLeave += (_, _) => item.Background = Brushes.Transparent;
+            if (restoredIds.Contains(record.Provider)) row.Opacity = UsageLastSeen.Dimmed;
             list.Children.Add(item);
         }
         // The viewport clip would turn the rows grayscale; they lie over the island's opaque surface.
@@ -437,6 +442,8 @@ public partial class MainWindow
         string missing = incomplete ? Loc.T("部分明细尚未读取完整：", "Some details are not fully read yet: ") + string.Join(Loc.T("、", ", "), result.IncompleteProviders.Select(AppPresets.Name)) : "";
         // The label cells explain only an incomplete total; otherwise the visible summary says it all.
         string? totalTip = incomplete ? missing : null;
+        if (restored.Count > 0)
+            totalTip = (totalTip is null ? "" : totalTip + "\n") + string.Join("\n", restored.Select(snapshot => AppPresets.Name(snapshot.Id) + " · " + snapshot.UsageNote));
         // Figures shown as "—" are not known yet, so their tooltips say why instead of giving a count of zero.
         var totalTips = incomplete && result.Entries.Count == 0 ? totals.Select(_ => (string?)missing).ToArray() : Tips(result.Entries, true);
         if (incomplete && result.Entries.Count > 0) totalTips[^1] = totalTips[^1] is { } note ? note + "\n" + missing : missing;
@@ -446,6 +453,7 @@ public partial class MainWindow
             int column = Grid.GetColumn(cell) / 2;
             cell.ToolTip = column >= 2 ? totalTips[column - 2] : totalTip;
         }
+        if (restored.Count > 0) totalRow.Opacity = UsageLastSeen.Dimmed;
         var footer = new Border { Child = totalRow, BorderBrush = UI.Brush(Look.Outline), BorderThickness = new Thickness(0, 1, 0, 0) };
         Grid.SetRow(footer, 2); panel.Children.Add(footer); UsageContent.Children.Add(panel);
     }

@@ -71,6 +71,17 @@ public static class DeviceLists
     // The devices whose reading the user turned off.
     public static IEnumerable<string> ReadOff(IReadOnlyList<DeviceChoice> choices)
         => choices.Where(choice => !choice.Read && !string.IsNullOrEmpty(choice.Hardware)).Select(choice => choice.Hardware!).Distinct(StringComparer.OrdinalIgnoreCase);
+    // The sources whose readers send to or listen on the device's USB collections, which the read switch stops; the others
+    // (Windows' Bluetooth and controller levels) have no switch, and their choices keep no hardware.
+    public static bool ReadSwitchable(DeviceSource source)
+        => source is DeviceSource.Hid or DeviceSource.Logitech or DeviceSource.Razer or DeviceSource.SteelSeries or DeviceSource.HyperX or DeviceSource.Sony;
+    // The read switch is the hardware's: every choice of that hardware takes it (two keys of one device, such as the one it
+    // was read under and the one it was listed under before it answered, never disagree).
+    public static void SetRead(List<DeviceChoice> choices, string hardware, bool on)
+    {
+        foreach (var choice in choices)
+            if (string.Equals(choice.Hardware, hardware, StringComparison.OrdinalIgnoreCase)) choice.Read = on;
+    }
 
     public static DeviceChoice? Find(IReadOnlyList<DeviceChoice> choices, string key)
     {
@@ -105,7 +116,12 @@ public static class DeviceLists
         return [.. listed.Select(key =>
         {
             var choice = Find(choices, key)?.Copy() ?? new DeviceChoice { Key = key };
-            if (all.FirstOrDefault(device => device.Key == key) is { } device) { choice.Name = device.Name; choice.Kind = device.Kind; choice.Hardware = device.Hardware ?? choice.Hardware; }
+            if (all.FirstOrDefault(device => device.Key == key) is { } device)
+            {
+                choice.Name = device.Name; choice.Kind = device.Kind;
+                if (ReadSwitchable(device.Source)) choice.Hardware = device.Hardware ?? choice.Hardware;
+                else { choice.Hardware = null; choice.Read = true; }
+            }
             return choice;
         })];
     }

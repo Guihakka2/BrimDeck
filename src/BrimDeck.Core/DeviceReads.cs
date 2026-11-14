@@ -20,8 +20,9 @@ public sealed class DeviceReadEntry
 // - No entry: the reads are tried, at most ProbeRounds times (when it is first seen, then RetryMs apart), and again only when
 //   it arrives anew (Arrived).
 // - An entry: only its read, on its collection. After MissesBeforeRecheck readings in a row without an answer it is checked
-//   once (its read first, then the others), at most once per RecheckMs; another read that answers then replaces it. A read
-//   the entry names that this version no longer has counts as no entry.
+//   once (its read first, then the others); another read that answers then replaces it. A check that finds nothing is not
+//   made again until the kept read answers again or the device arrives anew, so a device asleep for days is not asked every
+//   read it might take over and over. A read the entry names that this version no longer has counts as no entry.
 // - A read that went wrong on the device (Harmed) is never sent to it again; after HarmToStop of them the device is not read.
 // - The user can turn a device's reading off (DeviceReadSwitches) and on again, which clears what went wrong (Resume).
 // Times are Environment.TickCount64 values for the waits, wall-clock values for what is kept.
@@ -29,9 +30,8 @@ public sealed class DeviceReadBook
 {
     public const int ProbeRounds = 3, MissesBeforeRecheck = 20, HarmToStop = 2, MaximumEntries = 512;
     public static readonly long[] RetryMs = [5 * 60_000, 30 * 60_000];
-    public const long RecheckMs = 30 * 60_000;
 
-    private sealed class Run { public int Rounds; public long Next; public int Misses; public long RecheckAt; }
+    private sealed class Run { public int Rounds; public long Next; public int Misses; public bool Rechecked; }
     private readonly Dictionary<string, DeviceReadEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Run> _runs = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
@@ -40,7 +40,9 @@ public sealed class DeviceReadBook
     public bool Dirty { get; private set; }
 
     public enum Kind { None, Kept, Recheck, Probe }
-    public readonly record struct Ask(Kind Kind, IReadOnlyList<string> Ways);
+    // Kept: the device's kept read where it is asked on its kept collection (already known to that collection); every other
+    // way in Ways is a first try there.
+    public readonly record struct Ask(Kind Kind, IReadOnlyList<string> Ways, string? Kept = null);
 
     public static DeviceReadBook Parse(string? json)
     {
@@ -70,11 +72,19 @@ public sealed class DeviceReadBook
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
-    public DeviceReadEntry? Entry(string device) { lock (_gate) return _entries.TryGetValue(device, out var entry) ? entry : null; }
+    // A copy: the kept entry itself changes under the worker's reads.
+    public DeviceReadEntry? Entry(string device)
+    {
+        lock (_gate) return _entries.TryGetValue(device, out var entry)
+            ? new DeviceReadEntry { Device = entry.Device, Way = entry.Way, Collection = entry.Collection, Found = entry.Found, Bad = [.. entry.Bad], Stopped = entry.Stopped }
+            : null;
+    }
+    // The collection the device's kept read answered on, if it has one.
+    public string? KeptCollection(string device) { lock (_gate) return _entries.TryGetValue(device, out var entry) && entry.Way is not null ? entry.Collection : null; }
     public bool Stopped(string device) { lock (_gate) return _entries.TryGetValue(device, out var entry) && entry.Stopped; }
 
-    // What to ask a collection of the device now. ways: the reads that collection takes, in the brand's order. keptHere: the
-    // device's kept collection is this one; keptPresent: it is among the device's collections now.
+    // What to ask a collection of the device now. ways: the reads that collection takes, in the brand's order. keptPresent: the
+    // device's kept collection (KeptCollection) is among its collections now.
     public Ask Plan(string device, string collection, IReadOnlyList<string> ways, long now, bool keptPresent)
     {
         lock (_gate)
@@ -90,9 +100,9 @@ public sealed class DeviceReadBook
                 if (!string.Equals(entry.Collection, collection, StringComparison.OrdinalIgnoreCase)) return new(Kind.None, []);
                 if (ways.Contains(way))
                 {
-                    if (run.Misses >= MissesBeforeRecheck && now >= run.RecheckAt && usable.Count > 1)
-                        return new(Kind.Recheck, [way, .. usable.Where(other => other != way)]);
-                    return new(Kind.Kept, [way]);
+                    if (run.Misses >= MissesBeforeRecheck && !run.Rechecked && usable.Count > 1)
+                        return new(Kind.Recheck, [way, .. usable.Where(other => other != way)], way);
+                    return new(Kind.Kept, [way], way);
                 }
             }
             if (run.Rounds >= ProbeRounds || now < run.Next) return new(Kind.None, []);
@@ -106,7 +116,7 @@ public sealed class DeviceReadBook
         lock (_gate)
         {
             var run = RunOf(device, collection);
-            run.Misses = 0; run.Rounds = 0; run.Next = 0;
+            run.Misses = 0; run.Rounds = 0; run.Next = 0; run.Rechecked = false;
             var entry = EntryOf(device);
             if (entry.Way == way && string.Equals(entry.Collection, collection, StringComparison.OrdinalIgnoreCase)) return;
             entry.Way = way; entry.Collection = collection; entry.Found = at;
@@ -123,7 +133,7 @@ public sealed class DeviceReadBook
             switch (kind)
             {
                 case Kind.Kept: run.Misses++; break;
-                case Kind.Recheck: run.Misses = 0; run.RecheckAt = now + RecheckMs; break;
+                case Kind.Recheck: run.Misses = 0; run.Rechecked = true; break;
                 case Kind.Probe:
                     run.Rounds++;
                     run.Next = run.Rounds <= RetryMs.Length ? now + RetryMs[run.Rounds - 1] : long.MaxValue;
@@ -183,10 +193,37 @@ public sealed class DeviceReadBook
 }
 
 // The devices the user turned reading off for ("VVVV:PPPP"), set by the app from the settings, read by the device readers.
+// Known: every device the settings remember with its hardware (its key, name and kind), so a device turned off, or one that
+// gives no reading for a while, stays listed under the key it had while it was read rather than turning into a new device
+// (whose place, name and switches the user has not set) or disappearing. Off: those turned off.
 public static class DeviceReadSwitches
 {
-    private static volatile IReadOnlySet<string> _off = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    public static IReadOnlySet<string> Off => _off;
-    public static bool IsOff(string hardware) => _off.Contains(hardware);
-    public static void Use(IEnumerable<string> off) => _off = new HashSet<string>(off.Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.OrdinalIgnoreCase);
+    public sealed record Known(string Key, string Name, DeviceKind Kind, string Hardware, bool Read);
+    private sealed record State(IReadOnlySet<string> Off, IReadOnlyList<Known> Devices);
+    private static volatile State _state = new(new HashSet<string>(StringComparer.OrdinalIgnoreCase), []);
+    public static IReadOnlySet<string> Off => _state.Off;
+    public static IReadOnlyList<Known> Devices => _state.Devices;
+    public static bool IsOff(string hardware) => _state.Off.Contains(hardware);
+    public static void Use(IEnumerable<DeviceChoice> choices)
+    {
+        var known = choices.Where(choice => !string.IsNullOrWhiteSpace(choice.Hardware))
+            .Select(choice => new Known(choice.Key, choice.Name.Length > 0 ? choice.Name : choice.Hardware!, choice.Kind, choice.Hardware!, choice.Read)).ToList();
+        var off = known.Where(device => !device.Read).Select(device => device.Hardware).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // The same set while nothing was switched, so a reader can tell a switch by the set alone.
+        var was = _state.Off;
+        _state = new(was.Count == off.Count && was.SetEquals(off) ? was : off, known);
+    }
+    // The key a device of this hardware is remembered under: one it was read under before one the unread listing gave it
+    // ("hid:"); null when none is.
+    public static Known? Remembered(string hardware)
+    {
+        Known? any = null;
+        foreach (var device in _state.Devices)
+        {
+            if (!string.Equals(device.Hardware, hardware, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!device.Key.StartsWith("hid:", StringComparison.Ordinal)) return device;
+            any ??= device;
+        }
+        return any;
+    }
 }

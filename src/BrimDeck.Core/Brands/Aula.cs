@@ -5,11 +5,14 @@ namespace BrimDeck.Core;
 //   usage 2, feature report 9 (520 bytes): [9, checksum, command, argument, 1, 0, length low, length high, data...], the
 //   checksum the sum of the bytes after it. Command 09 argument 01 length 1 reads the battery; the answer comes back on the
 //   same report with the header (and its checksum) echoed and the percent at 8. The request read back carries 0 there.
-//   From OpenMouse's AULA SC380 Pro module (AGPL; facts only, from AULA's utility, verified on a receiver on Windows). The
-//   cable (258A:0136) was not tested there and is not sent to.
-// - L9 Ultra on its receiver 38A6:28FD (not AULA G9's 38A6:0030, which Pushes listens to), the 0xFFA8 collection: output
-//   report 0x0B with the status command 0x81, answered on input report 0x0A: 0A 81 ..., 1 at 17 while charging, the
-//   percent at 18. From vigil-watt's AulaL9Codec (MIT; reported by a contributor).
+//   AULA's utility reads the battery only after the link read (07 00, 1 while the mouse is linked); what the receiver
+//   answers for a mouse that is off is not documented, and the link read is not sent (a feature read cannot be asked
+//   first). From OpenMouse's AULA SC380 Pro module (AGPL; facts only, from AULA's utility, verified on a receiver on
+//   Windows). The cable (258A:0136) was not tested there and is not sent to.
+// - L9 Ultra on its receiver 38A6:28FD (not AULA G9's 38A6:0030, which Pushes listens to), its 0xFFA8 usage 2 collection:
+//   output report 0x0B with the status command 0x81, answered on input report 0x0A: 0A 81 ..., 1 at 17 while charging, the
+//   percent at 18. From vigil-watt's AulaL9Codec (MIT; reported by a contributor; only the 0xFFA8 collection answers) and,
+//   for the usage, MouseDock's AULA FFA8 family (MIT).
 [BrandFamilies]
 public static class AulaMice
 {
@@ -34,7 +37,7 @@ public static class AulaMice
     private static bool Sc380Collection(HidShape shape) => shape.Vendor == Sc380Vendor && shape.Product == Sc380Receiver
         && MouseShapes.Collection(shape, 0xFF02, 0x02) && shape.FeatureLength >= 9;
     private static bool L9Collection(HidShape shape) => shape.Vendor == L9Vendor && shape.Product == L9Receiver
-        && MouseShapes.Is(shape.UsagePage, 0xFFA8) && shape.InputLength >= 19 && shape.OutputLength >= 3;
+        && MouseShapes.Collection(shape, 0xFFA8, 0x02) && shape.InputLength >= 19 && shape.OutputLength >= 3;
 
     public static IEnumerable<BrandFamily> Families =>
     [

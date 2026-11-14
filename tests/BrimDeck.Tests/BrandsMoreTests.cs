@@ -73,6 +73,19 @@ static class BrandsMoreTests
         var n9Full = Hex("07 10 80 05 5B 03 00 D6 0C 00 05 5D 05 00 D6 0C 00 00 64", 62);
         check("Airoha RACE: the captured answers read 70 % (PLYR) and 50 % (N9 Hybrid), and 100 % in the same layout",
             AirohaRace.Battery(plyr) == new BatteryRead(70) && AirohaRace.Battery(n9) == new BatteryRead(50) && AirohaRace.Battery(n9Full) == new BatteryRead(100));
+        check("Airoha RACE: the Maxwell's cable reads as charging (it charges whenever it is on the cable), its dongles not",
+            Way(Race(0x3329, 0x4B1A, name: "Audeze Maxwell Headset")).Parse(plyr) == new BatteryRead(70, true)
+            && Way(Race(0x3329, 0x4B19, name: "Audeze Maxwell HID")).Parse(plyr) == new BatteryRead(70));
+
+        // Constructed from the documented layout: an older result before this request's acknowledgement, then the new one; a
+        // falling run after the acknowledgement (the last one is the level); a refused acknowledgement with an old result after it.
+        var older = Hex("07 19 80 05 5D 05 00 D6 0C 00 00 50 05 5B 03 00 D6 0C 00 05 5D 05 00 D6 0C 00 00 46", 62);
+        var run = Hex("07 19 80 05 5B 03 00 D6 0C 00 05 5D 05 00 D6 0C 00 00 63 05 5D 05 00 D6 0C 00 00 61", 62);
+        var oldOnly = Hex("07 10 80 05 5D 05 00 D6 0C 00 00 50 05 5B 03 00 D6 0C 00", 62);
+        var refusedAck = Hex("07 10 80 05 5B 03 00 D6 0C 01 05 5D 05 00 D6 0C 00 00 46", 62);
+        check("Airoha RACE: a result before the acknowledgement is an older one; the last of a run is the level; a refusal is none",
+            AirohaRace.Battery(older) == new BatteryRead(70) && AirohaRace.Battery(run) == new BatteryRead(97)
+            && AirohaRace.Battery(oldOnly) is null && AirohaRace.Battery(refusedAck) is null);
 
         // Constructed from the documented layout: the acknowledgement alone, then the same report still holding an older
         // result after its valid bytes; a dongle stuck echoing (HaloBattery: 07 00 80 00 ...); a refused or wrong-role result.

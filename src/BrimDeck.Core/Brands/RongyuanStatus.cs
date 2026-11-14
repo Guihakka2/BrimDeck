@@ -11,7 +11,9 @@ namespace BrimDeck.Core;
 // [2] the mouse's, [3] 0 while the keyboard is online, [4] 0 while the mouse is, [5] 1 when the receiver takes a command,
 // [6] what is paired (1 keyboard, 2 mouse, 3 both). A reading needs a keyboard paired, online, and a percent of 1 to 100; a
 // keyboard paired but offline is asleep. The request read back (F7 at [0]), the zeros of a receiver just plugged in and the
-// cable's echo are none. The receiver keeps its last value while the keyboard is away: [3] tells.
+// cable's echo are none. The receiver keeps its last value while the keyboard is away: [3] tells. No charging state is read:
+// VGN V HUB reads one at [9], but on the Neon75 Air it stayed 0 with the cable in, while [1] jumped to 100 (mousedock's
+// VGN-NEON75-AIR.md), so a 100 there may be the cable's and not a measured level.
 // Facts from: HaloBattery's monsgeek.py (MIT; MonsGeek's driver, 3151:5026 measured at 54 % and 52 %); mousedock (MIT;
 // VGN V HUB's RyServe.setStatus for 391D:2A05, measured at 82 %; MonsGeek's V4 driver for 3151:5038, user-tested);
 // vigil-watt (MIT; AK870 3151:4011 measured at 41 %); YesCharge (MIT; CAROTMAS Mars68 3151:502B, its receiver status);

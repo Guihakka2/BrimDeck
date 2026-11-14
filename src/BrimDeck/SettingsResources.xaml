@@ -498,6 +498,21 @@
       </ControlTemplate.Triggers>
     </ControlTemplate></Setter.Value></Setter>
   </Style>
+  <!-- A choice among several that may all be on: framed when off, filled with the accent's tint and outlined in the accent when on. -->
+  <Style x:Key="SettingsPickChip" TargetType="ToggleButton">
+    <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsFocus}"/>
+    <Setter Property="Foreground" Value="{DynamicResource SettingsTextSecondary}"/><Setter Property="FontSize" Value="12.5"/><Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Height" Value="32"/><Setter Property="Padding" Value="10,0"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+      <Border x:Name="Chrome" CornerRadius="7" Background="Transparent" BorderBrush="{DynamicResource SettingsInputBorder}" BorderThickness="1" Padding="{TemplateBinding Padding}">
+        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource SettingsFillHover}"/><Setter Property="Foreground" Value="{DynamicResource SettingsTextPrimary}"/></Trigger>
+        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource SettingsAccentTint}"/><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource SettingsAccentText}"/><Setter Property="Foreground" Value="{DynamicResource SettingsAccentText}"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style x:Key="SettingsStepper" TargetType="RepeatButton">
     <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsStepperFocus}"/>
     <Setter Property="Width" Value="21"/><Setter Property="Height" Value="26"/><Setter Property="Focusable" Value="True"/><Setter Property="Delay" Value="400"/><Setter Property="Interval" Value="80"/>

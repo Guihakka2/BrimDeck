@@ -22,7 +22,7 @@ public static class AstroA50Gen4
     public static BatteryRead? Level(byte[] r) => Answer(r) && (r[3] & 0x7F) is > 0 and <= 100 ? new(r[3] & 0x7F, (r[3] & 0x80) != 0) : null;
 
     private static bool Takes(HidShape s) => s.Vendor == Vendor && s.Product == Base && HeadsetPages.Is(s, 0xFF32) && s.Usage == 0x0074
-        && s.Interface is 6 or -1 && s.OutputLength >= 64 && s.InputLength >= 4;
+        && s.Interface is 6 or -1 && s.OutputLength >= 64 && s.InputLength >= 64;
 
     public static IEnumerable<BrandFamily> Families =>
     [

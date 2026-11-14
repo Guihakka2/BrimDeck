@@ -32,14 +32,14 @@ BrimDeck 只读取电量：不配对、不断开，也不改动任何设备与 W
 | 品牌 | 范围 |
 | --- | --- |
 | 罗技、雷蛇、华硕 ROG | 已知的无线型号 |
-| 迈从、狼蛛（F87 Pro、F99 Pro、F75、F108 Pro）、凌豹 K98、珂芝 K75、VGN、ATK、CHERRY PIXIU75、海盗船 K65 PLUS、Alienware Pro、URX Core75、Lofree Flow Lite84、MonsGeek、黑爵 AK870、CAROTMAS Mars68、GANSS、前行者 X87、Teevolution | 已知型号 |
+| 迈从、狼蛛（F87 Pro、F99 Pro、F75、F108 Pro）、凌豹 K98、珂芝 K75、VGN（含 V108）、ATK、CHERRY PIXIU75、海盗船 K65 PLUS、Alienware Pro、URX Core75、Lofree Flow Lite84、MonsGeek、黑爵 AK870、CAROTMAS Mars68、GANSS、前行者 X87、Teevolution、RK R98Pro V2 | 已知型号 |
 
 **耳机**
 
 | 品牌 | 范围 |
 | --- | --- |
 | Jabra、FIFINE、西伯利亚 | 整个品牌 |
-| 罗技（含 G PRO X 2）、赛睿、HyperX、海盗船、雷蛇、索尼 INZONE、华硕 ROG、ASTRO A50、迈从、狼蛛 G9、JBL Quantum 910、PULSE 3D、ATK、联想、寸渊影弑、漫步者 Halo Space | 已知型号 |
+| 罗技（含 G PRO X 2）、赛睿、HyperX、海盗船、雷蛇、索尼 INZONE 与 PULSE Explore、华硕 ROG、ASTRO A50、Audeze Maxwell、Skullcandy PLYR、AKG N9、迈从、狼蛛 G9、JBL Quantum 910、PULSE 3D、ATK、联想、寸渊影弑、漫步者 Halo Space | 已知型号 |
 
 **手柄**
 
@@ -88,3 +88,4 @@ BrimDeck 只读取电量：不配对、不断开，也不改动任何设备与 W
 - [aula-keyboard-battery-tray](https://github.com/KhromotozzDevOut/aula-keyboard-battery-tray)、[Aula-F75-Max-Driver](https://github.com/VitalyArt/Aula-F75-Max-Driver)（狼蛛键盘）
 - [mchose-macos](https://github.com/Klegus/mchose-macos)（迈从）
 - [ShowMeTheConnection](https://github.com/NaoCoding/ShowMeTheConnection)（珂芝）
+- [Headroom](https://github.com/patalbansishashank/Headroom)（Skullcandy、Audeze）、[eh-fifty](https://github.com/tdryer/eh-fifty)（ASTRO A50）

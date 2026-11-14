@@ -20,6 +20,10 @@ public partial class App : Application
     public DeckSettings Settings { get; private set; } = new();
     public SettingsStore Store { get; private set; } = null!;
     public UsageService Usage { get; private set; } = null!;
+    // The readings of the previous run, shown at the start until each source's own reading of this run arrives (UsageLastSeen). The list
+    // is emptied once the first round has ended.
+    internal UsageLastSeen LastSeen { get; private set; } = null!;
+    internal IReadOnlyList<ProviderSnapshot> RestoredUsage { get; set; } = [];
     public ProviderSecrets Secrets { get; private set; } = null!;
     public MiMoAccount MiMo { get; private set; } = null!;
     public Pricing Prices { get; private set; } = null!;
@@ -101,7 +105,7 @@ public partial class App : Application
         SensorGuard.Start(folder);
         // So is a first try of a device's read that the last run ended in (DeviceReadStore), with the reads kept for each device.
         DeviceReadStore.Start(folder);
-        DeviceReadSwitches.Use(DeviceLists.ReadOff(Settings.DeviceChoices));
+        DeviceReadSwitches.Use(Settings.DeviceChoices);
         UseLanguage(); UseFont();
         PanelTheme.Use(Settings);
         ScheduleDaylight();
@@ -123,6 +127,7 @@ public partial class App : Application
         Lyrics = new LyricsService(appleLyricsFile: Path.Combine(folder, "apple-music-lyrics.json"));
         Usage = new UsageService(new DesktopSources(MiMo), secrets: Secrets, quotaCache: Path.Combine(folder, ClaudeQuotaCache.FileName),
             kimiQuotaCache: Path.Combine(folder, KimiQuotaCache.FileName), cursorPriceCache: Path.Combine(folder, CursorPrices.FileName));
+        LastSeen = new UsageLastSeen(Path.Combine(folder, UsageLastSeen.FileName));
         WindowDrags = new WindowDrags();
         Shelf = new ShelfService(folder, Dispatcher); Shelf.Apply(Settings);
         Deck = new MainWindow(this); MainWindow = Deck;
@@ -133,7 +138,7 @@ public partial class App : Application
         ApplyProfileRules();
         StartBackgroundUpdates();
         // Only for a user who has the monitor page with its power line: the rest never open it.
-        if (Settings.MonitorPage && Settings.MonitorPower) PowerWarm.Start(Dispatcher);
+        if (Settings.MonitorPage && Settings.ShowsExpanded(ExpandedItem.Power)) PowerWarm.Start(Dispatcher);
         WarmSettingsWriter();
         ApplyMemoryMode();
         DisplayPower.Install(Dispatcher);
@@ -240,8 +245,13 @@ public partial class App : Application
         settings.Normalize(); Profiles.Keep(settings);
         // A device's reading turned on again may be tried afresh, what went wrong on it forgotten (DeviceReadBook.Resume).
         var readOff = DeviceLists.ReadOff(settings.DeviceChoices).ToList();
-        foreach (var device in DeviceReadSwitches.Off.Except(readOff, StringComparer.OrdinalIgnoreCase)) DeviceReadStore.Book.Resume(device);
-        DeviceReadSwitches.Use(readOff);
+        var resumed = DeviceReadSwitches.Off.Except(readOff, StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var device in resumed) DeviceReadStore.Book.Resume(device);
+        bool switched = !DeviceReadSwitches.Off.SetEquals(readOff);
+        DeviceReadSwitches.Use(settings.DeviceChoices);
+        if (switched) Devices?.Refresh();
+        // Kept now, off the UI thread: the worker may not run again before the app ends (the page closed).
+        if (resumed.Count > 0 || DeviceReadStore.Book.Dirty) ThreadPool.QueueUserWorkItem(_ => DeviceReadStore.Save());
         Settings = settings;
         // Every other profile's settings are made again from the new ones as panels ask for them.
         _profileSettings.Clear();
@@ -402,22 +412,38 @@ public partial class App : Application
     }
     // The system is read while any panel shows the monitor page open (and briefly after; see SystemSampler) or shows readings in
     // its collapsed row. Processes are listed only for an open page.
-    internal void PresentMonitor(MainWindow deck, bool page, bool strip, bool power = false, bool heldStrip = false)
+    internal void PresentMonitor(MainWindow deck, bool page, bool strip, bool power = false, bool heldStrip = false, ExpandedDemand? demand = null)
     {
-        if (page) _presentingMonitor.Add(deck); else _presentingMonitor.Remove(deck);
+        if (page) { _presentingMonitor.Add(deck); _pageDemands[deck] = demand ?? EveryDemand; } else { _presentingMonitor.Remove(deck); _pageDemands.Remove(deck); }
         if (power) _presentingPower.Add(deck); else _presentingPower.Remove(deck);
         if (strip) _stripMonitor.Add(deck); else _stripMonitor.Remove(deck);
         if (strip || heldStrip) _heldStrip.Add(deck); else _heldStrip.Remove(deck);
         LingerPageExtras();
         ApplyMonitorDemand(lingered: false);
     }
+    // What the open pages read (the layout of each keeps only the items the table chooses, ExpandedPlan.Demand); a page just closed keeps
+    // asking for what it did while its extras linger. An empty table reads nothing.
+    private const ExpandedDemand EveryDemand = (ExpandedDemand)511;
+    private readonly Dictionary<MainWindow, ExpandedDemand> _pageDemands = [];
+    private ExpandedDemand _lastPageDemand;
+    private ExpandedDemand PageDemand()
+    {
+        if (_presentingMonitor.Count > 0)
+        {
+            var all = ExpandedDemand.None;
+            foreach (var deck in _presentingMonitor) all |= _pageDemands.GetValueOrDefault(deck, EveryDemand);
+            return all;
+        }
+        return _pageExtras ? _lastPageDemand : ExpandedDemand.None;
+    }
     // lingered: the page's linger just ran out (LingerPageExtras), so a sampler no longer wanted stops at once instead of lingering again.
     private void ApplyMonitorDemand(bool lingered)
     {
         // A page that closed a moment ago is still read for, processes included, while its extras linger: opened again, it shows
         // the current list at once instead of "Reading processes…" until the first list comes.
-        bool listing = _presentingMonitor.Count > 0 || _pageExtras;
-        bool wanted = listing || _stripMonitor.Count > 0;
+        var pageDemand = PageDemand();
+        bool listing = (pageDemand & ExpandedDemand.Processes) != 0;
+        bool wanted = pageDemand != ExpandedDemand.None || _stripMonitor.Count > 0;
         if (Exiting || Monitor is null && !wanted) return;
         // The sampler reads the choice of graphics adapter on its own thread, where each part is read whole.
         Monitor ??= CreateMonitor();
@@ -468,6 +494,7 @@ public partial class App : Application
         if (_presentingMonitor.Count > 0)
         {
             _pageLinger?.Stop();
+            _lastPageDemand = PageDemand();
             _pageExtras = true; _pagePower = _presentingPower.Count > 0; _pageFrames = _presentingMonitor.Any(deck => deck.PageShowsFrames);
             return;
         }
@@ -492,22 +519,24 @@ public partial class App : Application
         var shown = strip ? _stripMonitor.Select(deck => deck.PanelSettings).Distinct().Aggregate(CompactMonitorItems.None, (items, settings) => items | Core.CompactMonitor.Shown(settings.CompactReadings)) : CompactMonitorItems.None;
         bool Heat(CompactMonitorItems item, CompactMonitorItems among) => (among & item) != 0 && rows.Any(settings => settings.CompactReadings.FirstOrDefault(reading => reading.Item == item) is { } reading
             && (item == CompactMonitorItems.Storage || reading.ShowValue) && CompactFigures.Shows(reading, CompactFigures.Temperature));
-        // The page's own choices, for the panels that show it (any panel's, while the page lingers after closing).
-        var pages = (_presentingMonitor.Count > 0 ? _presentingMonitor.Select(deck => deck.PanelSettings) : Decks.Select(deck => deck.PanelSettings)).Distinct().ToList();
-        bool temperatures = pages.Any(s => s.MonitorTemperatures), storage = pages.Any(s => s.MonitorStorage), power = pages.Any(s => s.MonitorPower), frames = pages.Any(s => s.MonitorFrames);
         bool stripDrives = (shown & CompactMonitorItems.Storage) != 0;
         if (Monitor is not null) Monitor.GpuUsage = Settings.MonitorGpuUsage;
-        Monitor?.SetExtras(page && temperatures || Heat(CompactMonitorItems.Cpu, held) || Heat(CompactMonitorItems.Gpu, held),
-            page && storage || stripDrives,
-            page && storage && temperatures || Heat(CompactMonitorItems.Storage, shown),
+        var pageDemand = PageDemand();
+        bool Page(ExpandedDemand what) => page && (pageDemand & what) != 0;
+        // The cpu, memory and network are read for what an open page shows and for a collapsed row; with a row, all as before.
+        bool stripActive = _stripMonitor.Count > 0 || _heldStrip.Count > 0;
+        Monitor?.SetReads(stripActive || Page(ExpandedDemand.Cpu), stripActive || Page(ExpandedDemand.Memory), stripActive || Page(ExpandedDemand.Network));
+        Monitor?.SetExtras(Page(ExpandedDemand.Temperatures) || Heat(CompactMonitorItems.Cpu, held) || Heat(CompactMonitorItems.Gpu, held),
+            Page(ExpandedDemand.Storage) || stripDrives,
+            Page(ExpandedDemand.Storage) && Page(ExpandedDemand.Temperatures) || Heat(CompactMonitorItems.Storage, shown),
             // The watts (the counters, NVIDIA's helper) only for a page that shows the power line or a row that chose the reading; the battery
             // alone also for the row's charge reading.
-            (_presentingPower.Count > 0 || _pageExtras && _pagePower) && power && PowerKnownToExist || (shown & CompactMonitorItems.Power) != 0,
+            (_presentingPower.Count > 0 || _pageExtras && _pagePower) && Page(ExpandedDemand.Power) && PowerKnownToExist || (shown & CompactMonitorItems.Power) != 0,
             (shown & CompactMonitorItems.Charge) != 0,
             // The frame rate for a row that shows it, or an open page with room for its line.
-            (shown & CompactMonitorItems.Frames) != 0 || frames && (_presentingMonitor.Any(deck => deck.PageShowsFrames) || _pageExtras && _pageFrames),
+            (shown & CompactMonitorItems.Frames) != 0 || Page(ExpandedDemand.Frames) && (_presentingMonitor.Any(deck => deck.PageShowsFrames) || _pageExtras && _pageFrames),
             // The graphics adapters for the page and the row's GPU reading (the power asks for them itself).
-            page || (shown & CompactMonitorItems.Gpu) != 0);
+            Page(ExpandedDemand.Gpu) || (shown & CompactMonitorItems.Gpu) != 0);
     }
     // The page reads the machine's power only where there may be something to read: not once the sampler knows there is neither a power
     // source nor a battery (a desktop with nothing), so such a page does not keep asking.
@@ -573,7 +602,7 @@ public partial class App : Application
     {
         Exiting = true; Lifetime.Cancel(); _save.Stop(); _trim?.Stop(); _release?.Stop(); FinishWriting(); StopBackgroundUpdates(); DisplayPower.Uninstall(); Microsoft.Win32.SystemEvents.UserPreferenceChanged -= SystemThemeChanged; _tray?.Dispose(); DisposeHotkeys(); WindowDrags?.Dispose(); _listener?.Unregister(null); _settingsEvent?.Dispose();
         if (Shelf is not null) { Shelf.Exit(); Shelf.Dispose(); }
-        Media?.Dispose(); _restingMedia?.Dispose(); Monitor?.Dispose(); SensorGuard.Finish(); Devices?.Dispose(); Lyrics?.Dispose(); Prices?.Dispose(); _mutex?.Dispose(); base.OnExit(e);
+        Media?.Dispose(); _restingMedia?.Dispose(); Monitor?.Dispose(); SensorGuard.Finish(); Devices?.Dispose(); DeviceReadStore.Finish(); Lyrics?.Dispose(); Prices?.Dispose(); _mutex?.Dispose(); base.OnExit(e);
     }
     [DllImport("shell32", CharSet = CharSet.Unicode)] private static extern int SetCurrentProcessExplicitAppUserModelID(string id);
 }

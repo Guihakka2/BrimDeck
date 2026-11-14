@@ -50,12 +50,14 @@ try
     CollapsedGeometryTests.Run(root, Check);
     PanelHeaderTests.Run(Check);
     SystemMonitorTests.Run(Check);
+    ExpandedMonitorTests.Run(Check);
     MonitorSpeechTests.Run(Check);
     CompactReadingTests.Run(Check);
     CoreMatrixTests.Run(Check);
     TemperatureTests.Run(Check);
     StorageTests.Run(Check);
     SensorStopTests.Run(Check);
+    MonitorStartupTests.Run(Check);
     StripAdmissionTests.Run(Check);
     DevicesTests.Run(Check);
     DeviceProtocolTests.Run(Check);
@@ -106,6 +108,7 @@ try
     await KimiUsageTests.Run(root, Check);
     await ClaudeRateLimitTests.Run(root, Check);
     await UsageStartupTests.Run(root, Check);
+    UsageLastSeenTests.Run(root, Check);
     await OpenCodeUsageTests.Run(root, Check);
     await OfficialPriceTests.Run(root, Check);
     await GrokBotUsageTests.Run(root, Check);
