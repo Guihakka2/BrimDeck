@@ -25,6 +25,7 @@ try
     await NoticeWsl2OpsTests.Run(Check);
     NoticeArchTests.Run(Check);
     NoticeCoreTests.Run(root, Check);
+    RowBatchesTests.Run(Check);
     NoticeWindowsAppTests.Run(Check);
     NoticeTimeTests.Run(Check);
     AuditFollowupTests.Run(Check);
