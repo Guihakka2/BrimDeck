@@ -382,6 +382,14 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 if (Razer.Find(group.Key) is { } model) Try(() => ReadRazer(model, [.. group], claimed));
         // The devices (GroupKey) a dongle protocol has read this pass.
         var answered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // The executables running, looked up once a pass and only if a family that stands aside for its software is here.
+        HashSet<string>? familyAside = null;
+        static HashSet<string> Running()
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ProcessSnapshot.Any(file => { names.Add(file.ToString()); return false; });
+            return names;
+        }
         // The ROG Omni receivers, each read as a whole (its pairing table, then its paired devices).
         foreach (var receiver in infos.Where(info => info.Vendor == Asus.Vendor && info.Product == Asus.OmniReceiver && !info.Bluetooth && !Off(info)).GroupBy(info => GroupKey(info.Path)))
             if (ask) Try(() => ReadOmni([.. receiver], claimed)); else foreach (var each in receiver) claimed.Add(each.Path);
@@ -397,9 +405,19 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             if (Headsets.Find(info.Vendor, info.Product) is { } headset) { if (Matches(info, Headsets.Channel(headset))) Try(() => ReadHeadset(headset, info, claimed, infos)); continue; }
             // AJAZZ shares Inphic's vendor ids: it does not stand aside for Inphic's software. A receiver whose mouse has answered on
             // one collection is not asked again on its others (G-Wolves' receiver has more than one that would take the request).
-            if (Dongle(info) is { } dongle && !answered.Contains(GroupKey(info.Path)) && (Dongles.IsAjazz(info.Vendor, info.Product) || !Aside(info.Vendor)))
+            if (Dongle(info) is { } dongle)
             {
-                Try(() => dongle(info, claimed));
+                if (!answered.Contains(GroupKey(info.Path)) && (Dongles.IsAjazz(info.Vendor, info.Product) || !Aside(info.Vendor)))
+                {
+                    Try(() => dongle(info, claimed));
+                    if (claimed.Contains(info.Path)) answered.Add(GroupKey(info.Path));
+                }
+            }
+            // The brands declared as families (BrandFamilies), on their dongles and cables: the reads each collection takes.
+            else if (!info.Bluetooth && BrandFamilies.Find(Shape(info)) is { Ways.Count: > 0 } brand && !answered.Contains(GroupKey(info.Path))
+                && !(brand.Family.StandAsideFor.Count > 0 && (familyAside ??= Running()).Overlaps(brand.Family.StandAsideFor)))
+            {
+                Try(() => ReadBrand(info, claimed, brand.Family, brand.Ways));
                 if (claimed.Contains(info.Path)) answered.Add(GroupKey(info.Path));
             }
         }
@@ -501,13 +519,14 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private void ListUnread(List<HidInfo> infos, HashSet<string> claimed, Dictionary<DeviceSource, List<DeviceBattery>> found)
     {
         var read = found.Values.SelectMany(list => list).Select(device => device.Hardware).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in infos.Where(info => !info.Bluetooth && Dongle(info) is not null).GroupBy(info => GroupKey(info.Path)))
+        foreach (var group in infos.Where(info => !info.Bluetooth && (Dongle(info) is not null || BrandFamilies.Find(Shape(info)) is not null)).GroupBy(info => GroupKey(info.Path)))
         {
             if (group.Any(info => claimed.Contains(info.Path))) continue;
             var info = group.First();
             string hardware = Devices.Hardware(info.Vendor, info.Product), key = Key("hid", info);
             if (read.Contains(hardware) || _lastRead.Values.Any(last => last.Device.Hardware == hardware && last.Device.Key != key)) continue;
-            var kind = info.Vendor == Dongles.MchoseVendor ? Dongles.MchoseKind(info.Product, info.ProductName) : Devices.Named(info.ProductName);
+            var kind = info.Vendor == Dongles.MchoseVendor ? Dongles.MchoseKind(info.Product, info.ProductName)
+                : Devices.Named(info.ProductName) ?? group.Select(each => BrandFamilies.Find(Shape(each))?.Family.Kind(Shape(each))).FirstOrDefault(found => found is not null);
             if (!found.TryGetValue(DeviceSource.Hid, out var list)) found[DeviceSource.Hid] = list = [];
             list.Add(new DeviceBattery(key, NameOf(info, hardware), kind ?? DeviceKind.Other, DeviceSource.Hid, null) { Hardware = hardware });
             read.Add(hardware);
@@ -824,6 +843,56 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             }
         }
         _present = infos.Select(info => Devices.Hardware(info.Vendor, info.Product) + "|" + Collection(info)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // ----- Brand families (BrandFamilies): the reads each brand declares, run as it says -----
+
+    internal static HidShape Shape(HidInfo info) => new(info.Vendor, info.Product, info.UsagePage, info.Usage, info.Interface, info.InputLength,
+        info.OutputLength, info.FeatureLength, info.OutputIds, info.FeatureIds, info.ProductName);
+
+    private static IEnumerable<DeviceBattery> ReadBrand(HidInfo info, HashSet<string> claimed, BrandFamily family, IReadOnlyList<BrandWay> ways)
+    {
+        var shape = Shape(info);
+        var byName = ways.ToDictionary(way => way.Name);
+        if (Family(info, [.. byName.Keys], name => Run(info, byName[name]) is { } read ? (read, null) : null) is not { } found) return [];
+        claimed.Add(info.Path);
+        return [Mouse(family.Prefix, info, family.Brand, found.Read, family.Kind(shape) ?? DeviceKind.Other, family.DisplayName(shape))];
+    }
+
+    // One read as its family declares it (BrandWay): its frames before, the request and the answer, its frames after. Null when
+    // it was not answered; a report the collection refuses throws (Family counts it as not answered).
+    private static BatteryRead? Run(HidInfo info, BrandWay way)
+    {
+        using var device = new HidDevice(info) { StripZero = way.StripZero };
+        bool feature = way.Transport is WayTransport.Feature or WayTransport.FeatureListen;
+        void Send(byte[] frame)
+        {
+            if (!feature) { device.Write(frame); return; }
+            if (!device.SetFeature(frame)) throw new IOException("The feature report was refused.");
+        }
+        try
+        {
+            foreach (var frame in way.Before) { Send(frame); Thread.Sleep(way.GapMs); }
+            for (int attempt = 0; attempt < Math.Max(1, way.Attempts); attempt++)
+            {
+                if (attempt > 0) Thread.Sleep(way.GapMs);
+                if (way.Transport == WayTransport.Feature)
+                {
+                    Send(way.Request);
+                    Thread.Sleep(way.GapMs);
+                    int length = way.FeatureLength > 0 ? way.FeatureLength : Math.Max(way.Request.Length, device.FeatureLength);
+                    if (device.GetFeature(way.Request[0], length) is { } reply && way.Parse(reply) is { } read) return read;
+                    continue;
+                }
+                Action send = way.Transport == WayTransport.Listen ? () => { } : () => Send(way.Request);
+                if (Hid.Transact<object>([device], send, r => way.Parse(r) is { } b ? b : null, way.TimeoutMs) is BatteryRead answer) return answer;
+            }
+            return null;
+        }
+        finally
+        {
+            foreach (var frame in way.After) try { Send(frame); } catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException or IOException) { }
+        }
     }
 
     // MCHOSE on its own vendor id 0x3837: the reads Dongles.MchoseReads gives the collection (by its shape and the report ids it
