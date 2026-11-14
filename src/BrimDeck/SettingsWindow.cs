@@ -1218,13 +1218,17 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         Group(Row(Loc.T("当前版本", "Current version"),version),
             Row(Loc.T("开源许可证", "License"),TextLine("Apache License 2.0",12,TextSecondary)),
             Row(Loc.T("项目主页", "Homepage"),Link("GitHub ↗","https://github.com/MoFeng2223/BrimDeck")),
-            Row(Loc.T("问题与建议", "Issues and suggestions"),Link(Loc.T("提交反馈 ↗", "Send feedback ↗"),"https://github.com/MoFeng2223/BrimDeck/issues")));
+            Row(Loc.T("问题与建议", "Issues and suggestions"),Link(Loc.T("提交反馈 ↗", "Send feedback ↗"),"https://github.com/MoFeng2223/BrimDeck/issues")),
+            // The README's community section in the interface language, so the ways to reach us can change without a new version.
+            Row(Loc.T("交流", "Community"),Link(Loc.T("查看交流方式 ↗", "Join the community ↗"),Loc.T(
+                "https://github.com/MoFeng2223/BrimDeck/blob/main/README.zh-CN.md#%E4%BA%A4%E6%B5%81",
+                "https://github.com/MoFeng2223/BrimDeck/blob/main/README.md#community"))));
     }
 
     // External links are plain text, so their right edge lines up with the values in the rows above.
     private Button Link(string text, string url)
     {
-        var link = ActionButton(text, () => UI.OpenUrl(url)); link.Style = (Style)FindResource("SettingsLink"); link.ToolTip = url; return link;
+        var link = ActionButton(text, () => UI.OpenUrl(url)); link.Style = (Style)FindResource("SettingsLink"); link.ToolTip = Uri.UnescapeDataString(url); return link;
     }
 
     // Sections and groups are added to the page, or to the panel being collected while one is.
