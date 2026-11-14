@@ -16,7 +16,8 @@ public partial class MainWindow
     private bool _hotkeyPinned;
 
     // Hidden by the hide hotkey; part of IsSuppressed, so it combines with the full-screen rule the same way.
-    internal bool HiddenByUser => _app.UserHidden && !_hotkeyOpened;
+    // A profile rule that hides every panel (App.RuleHidesAll) hides the main one, which then has no other panel to hand over to.
+    internal bool HiddenByUser => (_app.UserHidden || _app.RuleHidesAll && _lead is null) && !_hotkeyOpened;
     internal IntPtr HotkeyMonitor => MonitorHandle;
     internal bool IsOpenForHotkey => _expanded && !_preview;
     internal bool IsHotkeyPinned => _hotkeyPinned;
@@ -73,7 +74,7 @@ public partial class MainWindow
     internal void UserHiddenChanged()
     {
         _hotkeyOpened = false; _hotkeyPinned = false;
-        if (_app.UserHidden)
+        if (_app.UserHidden || _app.RuleHidesAll && _lead is null)
         {
             _hover.Stop(); _leave.Stop(); _pointerInside = false; _cursorInCompact = false;
             if (_alert is not null) ClearAlert();

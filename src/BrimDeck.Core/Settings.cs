@@ -16,8 +16,12 @@ public enum WindowBehavior { Normal, Line, Hide }
 public enum ScreenContext { Desktop, Maximized, Borderless, Exclusive, BackgroundFullscreen }
 // The monitors that show the panel. Chosen uses DisplayMonitors and falls back to the primary monitor while none of them is connected.
 public enum DisplayPlacement { Primary, Chosen }
-// A chosen monitor: its device path, and its name at the time, so that a disconnected monitor can still be named.
-public sealed record ChosenDisplay(string Id, string Name);
+// A chosen monitor: its device path, and its name at the time, so that a disconnected monitor can still be named. Profile is
+// the profile its panel shows, or null for the current one (DeckSettings.CurrentProfile).
+public sealed record ChosenDisplay(string Id, string Name)
+{
+    public Guid? Profile { get; init; }
+}
 // One app's own answers to the three window rules, as "app rules": for each of the three contexts the app can be in, the
 // panel can follow the global rules (null) or choose one of the behaviors they offer. An app with all three set to Normal
 // is the full-screen exception as it began: its covering windows leave the panel alone. Path is the executable when it is
@@ -416,6 +420,7 @@ public sealed class DeckSettings
     public string RefreshHotkey { get; set; } = "";
     public string CycleStyleHotkey { get; set; } = "";
     public string LineStyleHotkey { get; set; } = "";
+    public string NextProfileHotkey { get; set; } = "";
     public string Hotkey(HotkeyKind kind) => (kind switch
     {
         HotkeyKind.Hide => HideHotkey, HotkeyKind.Expand => ExpandHotkey, HotkeyKind.Resize => ResizeHotkey, HotkeyKind.Move => MoveHotkey,
@@ -423,7 +428,7 @@ public sealed class DeckSettings
         HotkeyKind.Page2 => Page2Hotkey, HotkeyKind.Page3 => Page3Hotkey, HotkeyKind.Page4 => Page4Hotkey,
         HotkeyKind.Page5 => Page5Hotkey, HotkeyKind.Page6 => Page6Hotkey, HotkeyKind.Page7 => Page7Hotkey, HotkeyKind.Page8 => Page8Hotkey,
         HotkeyKind.Page9 => Page9Hotkey, HotkeyKind.Page10 => Page10Hotkey, HotkeyKind.Refresh => RefreshHotkey,
-        HotkeyKind.CycleStyle => CycleStyleHotkey, HotkeyKind.LineStyle => LineStyleHotkey, _ => ""
+        HotkeyKind.CycleStyle => CycleStyleHotkey, HotkeyKind.LineStyle => LineStyleHotkey, HotkeyKind.NextProfile => NextProfileHotkey, _ => ""
     }) ?? "";
     public void SetHotkey(HotkeyKind kind, string value)
     {
@@ -448,6 +453,7 @@ public sealed class DeckSettings
             case HotkeyKind.Refresh: RefreshHotkey = value; break;
             case HotkeyKind.CycleStyle: CycleStyleHotkey = value; break;
             case HotkeyKind.LineStyle: LineStyleHotkey = value; break;
+            case HotkeyKind.NextProfile: NextProfileHotkey = value; break;
         }
     }
     // Mouse pass-through: hovering does not open the panel and every click goes to the window beneath; only the shortcuts open
@@ -703,6 +709,12 @@ public sealed class DeckSettings
     public bool QuotaAlerts { get; set; } = true;
     // Also reads the Claude Code and Codex CLI session records inside WSL distributions. Off by default: it starts stopped distributions.
     public bool IncludeWsl { get; set; }
+    // The named profiles (DeckProfile, Profiles). The current one's settings are the ordinary members of this class; ReturnProfile is
+    // the profile a rule replaced while it holds (ProfileRule), to come back to when it stops holding or BrimDeck starts again.
+    public List<DeckProfile> Profiles { get; set; } = [];
+    public Guid CurrentProfile { get; set; }
+    public Guid? ReturnProfile { get; set; }
+    public List<ProfileRule> ProfileRules { get; set; } = [];
     // The ordered application list; the order is the column order of the expanded panel. Claude and Codex are shown
     // at first; the other built-in applications are listed but hidden.
     public List<AppEntry> Apps
@@ -800,6 +812,8 @@ public sealed class DeckSettings
         copy.FullscreenRules = FullscreenRules.Select(rule => rule with { }).ToList();
         copy.IgnoredMediaApps = [.. IgnoredMediaApps ?? []];
         copy.DeviceChoices = [.. (DeviceChoices ?? []).Select(device => device.Copy())];
+        copy.Profiles = [.. (Profiles ?? []).Select(profile => profile.Copy())];
+        copy.ProfileRules = [.. (ProfileRules ?? []).Select(rule => rule.Copy())];
         return copy;
     }
     public void Normalize()
@@ -948,8 +962,9 @@ public sealed class DeckSettings
             .Select(app => new IgnoredMediaApp(app.AppId.Trim(), (app.Name ?? "").Trim(), (app.Path ?? "").Trim()))
             .DistinctBy(app => app.AppId, StringComparer.OrdinalIgnoreCase).Take(AppPresets.MaximumIgnoredMediaApps).ToList();
         DisplayMonitors = (DisplayMonitors ?? []).OfType<ChosenDisplay>().Where(d => !string.IsNullOrWhiteSpace(d.Id))
-            .Select(d => new ChosenDisplay(d.Id.Trim(), (d.Name ?? "").Trim())).DistinctBy(d => d.Id).ToList();
+            .Select(d => d with { Id = d.Id.Trim(), Name = (d.Name ?? "").Trim() }).DistinctBy(d => d.Id).ToList();
         if (Display == DisplayPlacement.Chosen && DisplayMonitors.Count == 0) Display = DisplayPlacement.Primary;
+        Core.Profiles.Normalize(this);
     }
 }
 

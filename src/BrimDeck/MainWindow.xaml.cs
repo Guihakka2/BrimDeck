@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private bool _retiring;
     // The monitor this panel sits on; App assigns it. Without one, or while it is not connected, the primary monitor.
     internal DisplayInfo? Display { get; set; }
+    internal string DisplayLabel(IReadOnlyList<DisplayInfo> all) => Display is { } display && all.FirstOrDefault(d => d.Id == display.Id) is { } shown ? Native.Displays.Label(shown, all) : "";
     private IntPtr MonitorHandle => Display is { } display && WindowsHost.MonitorScreen(display.Handle) is not null ? display.Handle : WindowsHost.PrimaryMonitor();
     // Animated in place so the indicator style can fade its surface in and out instead of switching brushes.
     private readonly SolidColorBrush _surface = new(Colors.Black);
@@ -79,7 +80,30 @@ public partial class MainWindow : Window
     // The number of the latest read; a partial result belongs to the read that sent it and is dropped once another has begun or its own is whole.
     private int _round;
     private CompactAlertInfo? _alert;
-    private DeckSettings Settings => _app.Settings;
+    // The profile this panel shows (App.AssignDisplays): null for the current one, whose settings are App.Settings.
+    internal Guid? Profile { get; set; }
+    private DeckSettings Settings => _app.SettingsFor(Profile);
+    // The look the panel draws with: the main look (PanelTheme.Main), or its own while it shows another profile than the current one,
+    // whose theme, night hours and transparency may differ. Its own look's brushes are the window's resources; its elements find the
+    // look through the inherited PanelLook.LookProperty.
+    private PanelLook? _ownLook;
+    internal PanelLook Look => _ownLook ?? PanelTheme.Main;
+    // Called by App, before the panel takes its settings, whenever the profile or the theme may have changed. Returns whether the
+    // look changed.
+    internal bool UseLook(bool reload = false, bool systemChanged = false)
+    {
+        if (Profile is null)
+        {
+            if (_ownLook is null) return false;
+            _ownLook.Changing -= BeginThemeFade; _ownLook = null;
+            PanelLook.Unpublish(Resources); ClearValue(PanelLook.LookProperty);
+            return true;
+        }
+        bool created = _ownLook is null;
+        if (_ownLook is null) { _ownLook = new PanelLook(Resources); _ownLook.Changing += BeginThemeFade; PanelLook.Set(this, _ownLook); }
+        return _ownLook.Use(Settings, reload, systemChanged) || created;
+    }
+    internal DeckSettings PanelSettings => Settings;
     public bool IsExpanded => _expanded;
     public bool IsSuppressed => !_preview && (Settings.Behavior(_context, _host.App.Name, _host.App.Path, _host.BackgroundKind) == WindowBehavior.Hide || HiddenByUser);
     // The panel is a topmost overlay: kept above other windows, or an ordinary panel a window rule turns into the indicator,
@@ -595,23 +619,23 @@ public partial class MainWindow : Window
     private void ApplyTheme()
     {
         double dpi = PresentationSource.FromVisual(this) is null ? 1 : VisualTreeHelper.GetDpi(this).DpiScaleX;
-        if (_themeGeneration == PanelTheme.Generation && _themeDpi == dpi) return;
+        if (_themeGeneration == Look.Generation && _themeDpi == dpi) return;
         // A new scale alone only redraws the scan lines or texture, which are laid out in device pixels.
-        bool sameTheme = _themeGeneration == PanelTheme.Generation;
-        _themeGeneration = PanelTheme.Generation; _themeDpi = dpi;
+        bool sameTheme = _themeGeneration == Look.Generation;
+        _themeGeneration = Look.Generation; _themeDpi = dpi;
         // The resize hints take the theme's colors when they are drawn.
         _grips?.InvalidateVisual();
-        if (sameTheme) { Island.Pattern = PanelTheme.Texture(dpiScale: dpi) ?? PanelTheme.Scanlines(dpiScale: dpi); FitShadowCache(dpi); return; }
-        Foreground = UI.Brush(UI.Primary);
-        PanelTheme.Dress(Island, dpiScale: dpi);
-        if (IslandShadow.Effect is System.Windows.Media.Effects.DropShadowEffect shadow) PanelTheme.Dress(shadow);
+        if (sameTheme) { Island.Pattern = Look.Texture(dpiScale: dpi) ?? Look.Scanlines(dpiScale: dpi); FitShadowCache(dpi); return; }
+        Foreground = UI.Brush(Look.Primary);
+        Look.Dress(Island, dpiScale: dpi);
+        if (IslandShadow.Effect is System.Windows.Media.Effects.DropShadowEffect shadow) Look.Dress(shadow);
         // Pixel art draws the island's text unsmoothed, as on a pixel screen, and casts a stepped shadow.
-        PanelTheme.Text(Island);
-        if (IslandShadow.Children.OfType<IslandBorder>().FirstOrDefault() is { } caster) caster.Pixel = PanelTheme.Current.Effects.Pixel;
+        Look.Text(Island);
+        if (IslandShadow.Children.OfType<IslandBorder>().FirstOrDefault() is { } caster) caster.Pixel = Look.Current.Effects.Pixel;
         FitShadowCache(dpi);
-        MusicIndicator.Background = UI.Brush(PanelTheme.Hex("indicatorProgress"));
-        SetImmediate(_surface, SolidColorBrush.ColorProperty, PanelTheme.ColorOf(!_expanded && Collapsed.Style == CompactStyle.Line ? "indicator" : "surface"));
-        _musicAccent = MusicVisuals.Accent(_mediaCover, out _coverAccent);
+        MusicIndicator.Background = UI.Brush(Look.Hex("indicatorProgress"));
+        SetImmediate(_surface, SolidColorBrush.ColorProperty, Look.ColorOf(!_expanded && Collapsed.Style == CompactStyle.Line ? "indicator" : "surface"));
+        _musicAccent = MusicVisuals.Accent(_mediaCover, out _coverAccent, Look);
         _musicRenderKey = ""; _compactRendered = null; _alertRendered = null;
         if (_detailPopup is { } popup) Dispatcher.BeginInvoke(() => { if (ReferenceEquals(_detailPopup, popup)) popup.Close(); });
         if (MediaSourceButton.ContextMenu?.IsOpen == true) Dispatcher.BeginInvoke(CloseSourceMenu);
@@ -624,7 +648,7 @@ public partial class MainWindow : Window
         double opacity = 1 - Settings.SurfaceTransparency / 100d;
         bool clear = opacity < 1;
         Island.SurfaceOpacity = opacity;
-        if (PanelTheme.Current.Effects.Pixel <= 0)
+        if (Look.Current.Effects.Pixel <= 0)
         {
             if (clear) TextOptions.SetTextRenderingMode(Island, TextRenderingMode.Grayscale);
             else Island.ClearValue(TextOptions.TextRenderingModeProperty);
@@ -950,7 +974,7 @@ public partial class MainWindow : Window
         Animate(ShadowHost, OpacityProperty, !expanded && !line ? 1 : 0, duration, shadow, easeOut);
         // The surface stays opaque throughout; it loses its rim and turns grey only once it has the indicator's shape.
         Animate(Island, IslandBorder.MaterialOpacityProperty, indicator ? 0 : 1, duration, rim, easeOut);
-        var tone = PanelTheme.ColorOf(indicator ? "indicator" : "surface");
+        var tone = Look.ColorOf(indicator ? "indicator" : "surface");
         // Opening from the indicator, the surface takes its own color while it is still the thin line: the opening spring is
         // half way open within a few frames, and a tint still under way showed for those frames as a large block in the
         // indicator's color.
@@ -1121,7 +1145,7 @@ public partial class MainWindow : Window
     }
     private Task<List<ProviderSnapshot>> LoadSnapshotsAsync(DateTime? historyStart, Action<IReadOnlyList<ProviderSnapshot>> progress)
     {
-        var settings = Settings.Copy();
+        var settings = _app.DataSettings();
         RefreshPrices();
         return Task.Run(() => _app.Usage.RefreshAsync(settings, _app.Lifetime.Token, historyStart, progress));
     }

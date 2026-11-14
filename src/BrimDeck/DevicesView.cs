@@ -17,6 +17,8 @@ namespace BrimDeck;
 // MonitorCrossfade) only when its layout step changes.
 internal sealed class DevicesView : FrameworkElement
 {
+    // The look of the panel this element is drawn in (PanelLook.Of); the main look outside a panel.
+    private PanelLook Look => PanelLook.Of(this);
     private readonly DevicesLayout _layout;
     private readonly DeviceInks _inks;
     private sealed class Card
@@ -230,7 +232,7 @@ internal sealed class DevicesView : FrameworkElement
         if (list && max > 0)
         {
             double content = _layout.ListHeight(ShownCount, LinesWidth(w)), length = Math.Max(16, h * h / content), top = (h - length) * scroll / max;
-            drawing.DrawRoundedRectangle(UI.Brush(PanelTheme.Hex("scrollThumb")), null, new Rect(w - 3, top, 3, length), 1.5, 1.5);
+            drawing.DrawRoundedRectangle(UI.Brush(Look.Hex("scrollThumb")), null, new Rect(w - 3, top, 3, length), 1.5, 1.5);
         }
     }
 
@@ -239,13 +241,13 @@ internal sealed class DevicesView : FrameworkElement
     private void Empty(DrawingContext drawing, double w, double h, double ppd, double opacity)
     {
         if (opacity <= .001) return;
-        var heading = MonitorDraw.Text(Loc.T("没有已连接的无线设备", "No wireless devices connected"), 13, UI.Secondary, ppd);
+        var heading = MonitorDraw.Text(Loc.T("没有已连接的无线设备", "No wireless devices connected"), 13, Look.Secondary, ppd);
         string hint = Loc.T("连接蓝牙耳机、键鼠、手柄，或插上罗技等接收器后会显示在这里", "Bluetooth headphones, keyboards, mice and controllers, and receivers such as Logitech's, show here once connected");
         // Laid out once per text, width and scale: it is drawn on every frame of a fade.
-        var key = (hint, Math.Round(Math.Max(40, Math.Min(w - 24, 300))), ppd, UI.Tertiary);
+        var key = (hint, Math.Round(Math.Max(40, Math.Min(w - 24, 300))), ppd, Look.Tertiary);
         if (_hint is not { } known || known.Key != key)
             _hint = (key, new FormattedText(hint, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-                new Typeface(UI.PanelFont, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), 11, UI.Brush(UI.Tertiary), ppd)
+                new Typeface(UI.PanelFont, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), 11, UI.Brush(Look.Tertiary), ppd)
             { MaxTextWidth = key.Item2, MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center });
         var lines = _hint.Value.Text;
         bool ring = h >= 120;
@@ -254,9 +256,9 @@ internal sealed class DevicesView : FrameworkElement
         if (ring)
         {
             var center = new Point(Math.Round(w / 2), top + ringSize / 2);
-            Ring(drawing, center, ringSize, 4, null, UI.Primary);
+            Ring(drawing, center, ringSize, 4, null, Look.Primary, look: Look);
             drawing.PushOpacity(.35);
-            DeviceGlyphs.Draw(drawing, DeviceKind.Other, new Rect(center.X - 11, center.Y - 11, 22, 22), UI.Primary);
+            DeviceGlyphs.Draw(drawing, DeviceKind.Other, new Rect(center.X - 11, center.Y - 11, 22, 22), Look.Primary);
             drawing.Pop();
         }
         double y = top + ringSize + (ring ? 12 : 0);
@@ -269,14 +271,14 @@ internal sealed class DevicesView : FrameworkElement
     private void Looking(DrawingContext drawing, double w, double h, double ppd, double opacity)
     {
         if (opacity <= .001) return;
-        var words = MonitorDraw.Text(Loc.T("正在查找设备…", "Looking for devices…"), 11, UI.Tertiary, ppd);
+        var words = MonitorDraw.Text(Loc.T("正在查找设备…", "Looking for devices…"), 11, Look.Tertiary, ppd);
         double size = h >= 120 ? 48 : 32, gap = size * .6, total = size + 12 + words.Height, top = Math.Round((h - total) / 2);
         if (opacity < .999) drawing.PushOpacity(opacity);
         for (int i = 0; i < 3; i++)
         {
             var center = new Point(Math.Round(w / 2 + (i - 1) * (size + gap)), top + size / 2);
-            Ring(drawing, center, size, size / 12, null, UI.Primary);
-            Arc(drawing, center, (size - size / 12) / 2, size / 12, i / 3.0, .14, MonitorDraw.Faint(UI.Primary, .35));
+            Ring(drawing, center, size, size / 12, null, Look.Primary, look: Look);
+            Arc(drawing, center, (size - size / 12) / 2, size / 12, i / 3.0, .14, MonitorDraw.Faint(Look.Primary, .35));
         }
         drawing.DrawText(words, new Point(Math.Round((w - words.WidthIncludingTrailingWhitespace) / 2), top + size + 12));
         if (opacity < .999) drawing.Pop();
@@ -290,14 +292,14 @@ internal sealed class DevicesView : FrameworkElement
         string ring = _inks.Ring(device), accent = _inks.Figure(device);
         double cx = r.X + r.Width / 2;
         var center = new Point(cx, r.Y + t.Ring / 2);
-        Ring(drawing, center, t.Ring, t.Stroke, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring);
-        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(cx - t.Icon / 2, center.Y - t.Icon / 2, t.Icon, t.Icon), device.Lowest is null ? UI.Tertiary : UI.Primary);
-        if (device.Charging && device.Lowest is not null) Badge(drawing, center, (t.Ring - t.Stroke) / 2, Math.Round(t.Ring * .28), ring);
+        Ring(drawing, center, t.Ring, t.Stroke, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring, look: Look);
+        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(cx - t.Icon / 2, center.Y - t.Icon / 2, t.Icon, t.Icon), device.Lowest is null ? Look.Tertiary : Look.Primary);
+        if (device.Charging && device.Lowest is not null) Badge(drawing, center, (t.Ring - t.Stroke) / 2, Math.Round(t.Ring * .28), ring, look: Look);
         double top = r.Y + t.Ring + t.Gap;
         Figure(drawing, device, accent, cx, top, t.Figure, t.FigureLine, t.Unit, ppd, centered: true);
         top += t.FigureLine + DeviceTileStep.NameGap;
         var (name, detail) = Texts(card, device.Name, t.DetailLine > 0 ? Detail(device, _inks.Level(device)) : null,
-            r.Width - 8, t.Name, t.Detail, UI.Primary, _inks.Detail(device), ppd);
+            r.Width - 8, t.Name, t.Detail, Look.Primary, _inks.Detail(device), ppd);
         drawing.DrawText(name, new Point(Math.Round(cx - name.WidthIncludingTrailingWhitespace / 2), Math.Round(top + (t.NameLine - name.Height) / 2)));
         if (detail is not null)
             drawing.DrawText(detail, new Point(Math.Round(cx - detail.WidthIncludingTrailingWhitespace / 2), Math.Round(top + t.NameLine + (t.DetailLine - detail.Height) / 2)));
@@ -310,12 +312,12 @@ internal sealed class DevicesView : FrameworkElement
         var device = card.Device;
         string ring = _inks.Ring(device), accent = _inks.Figure(device);
         var center = new Point(r.X + s.Ring / 2, r.Y + s.Ring / 2);
-        Ring(drawing, center, s.Ring, s.Stroke, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring);
-        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(center.X - s.Icon / 2, center.Y - s.Icon / 2, s.Icon, s.Icon), device.Lowest is null ? UI.Tertiary : UI.Primary);
-        if (device.Charging && device.Lowest is not null) Badge(drawing, center, (s.Ring - s.Stroke) / 2, Math.Round(s.Ring * .22), ring);
+        Ring(drawing, center, s.Ring, s.Stroke, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring, look: Look);
+        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(center.X - s.Icon / 2, center.Y - s.Icon / 2, s.Icon, s.Icon), device.Lowest is null ? Look.Tertiary : Look.Primary);
+        if (device.Charging && device.Lowest is not null) Badge(drawing, center, (s.Ring - s.Stroke) / 2, Math.Round(s.Ring * .22), ring, look: Look);
         double x = r.X + s.Ring + s.Gap, width = Math.Max(10, r.Right - x);
         string what = string.Join(" · ", new[] { Devices.KindName(device.Kind), Detail(device, _inks.Level(device)) }.Distinct());
-        var (name, detail) = Texts(card, device.Name, what, width, s.Name, s.Detail, UI.Primary, _inks.Detail(device), ppd);
+        var (name, detail) = Texts(card, device.Name, what, width, s.Name, s.Detail, Look.Primary, _inks.Detail(device), ppd);
         double block = s.FigureLine + 2 + s.NameLine + s.DetailLine, top = Math.Round(center.Y - block / 2);
         Figure(drawing, device, accent, x, top, s.Figure, s.FigureLine, s.Unit, ppd, centered: false);
         top += s.FigureLine + 2;
@@ -329,34 +331,34 @@ internal sealed class DevicesView : FrameworkElement
     {
         var device = card.Device;
         string ring = _inks.Ring(device), accent = _inks.Figure(device);
-        if (divider) drawing.DrawRectangle(UI.Brush(PanelTheme.Hex("rowDivider")), null, new Rect(r.X, r.Y, r.Width, 1 / ppd));
+        if (divider) drawing.DrawRectangle(UI.Brush(Look.Hex("rowDivider")), null, new Rect(r.X, r.Y, r.Width, 1 / ppd));
         double middle = r.Y + r.Height / 2;
-        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(r.X, Math.Round(middle - 9), 18, 18), device.Lowest is null ? UI.Tertiary : UI.Primary);
+        DeviceGlyphs.Draw(drawing, device.Kind, new Rect(r.X, Math.Round(middle - 9), 18, 18), device.Lowest is null ? Look.Tertiary : Look.Primary);
         const double figureColumn = 38, ringSize = 18;
         double figureRight = r.Right, ringX = figureRight - figureColumn - 6 - ringSize;
         var center = new Point(ringX + ringSize / 2, middle);
-        Ring(drawing, center, ringSize, 2.5, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring);
+        Ring(drawing, center, ringSize, 2.5, device.Lowest is null ? null : Math.Clamp(card.Fill.At(now), 0, 1), ring, look: Look);
         if (device.Charging && device.Lowest is not null) DeviceGlyphs.Bolt(drawing, new Rect(center.X - 5, center.Y - 5, 10, 10), ring);
         // The figure, right-aligned in its column.
         var number = MonitorDraw.Text(device.Lowest is { } p ? Devices.Clamp(p).ToString(System.Globalization.CultureInfo.InvariantCulture) : "—", 15,
-            device.Lowest is null ? UI.Tertiary : accent, ppd, display: true);
-        var unit = MonitorDraw.Text("%", 10, UI.Secondary, ppd);
+            device.Lowest is null ? Look.Tertiary : accent, ppd, display: true);
+        var unit = MonitorDraw.Text("%", 10, Look.Secondary, ppd);
         double baseline = Math.Round(middle + 15 * .36), unitX = figureRight - (device.Lowest is null ? 0 : unit.WidthIncludingTrailingWhitespace);
         if (device.Lowest is not null) MonitorDraw.Baseline(drawing, unit, unitX, baseline);
         MonitorDraw.Baseline(drawing, number, unitX - (device.Lowest is null ? 0 : 1) - number.WidthIncludingTrailingWhitespace, baseline);
         double textX = r.X + 18 + 10, textWidth = Math.Max(10, ringX - 10 - textX);
-        var (name, detail) = Texts(card, device.Name, Detail(device, _inks.Level(device)), textWidth, 12, 10.5, UI.Primary, _inks.Detail(device), ppd);
+        var (name, detail) = Texts(card, device.Name, Detail(device, _inks.Level(device)), textWidth, 12, 10.5, Look.Primary, _inks.Detail(device), ppd);
         double block = 15 + 13, top = Math.Round(middle - block / 2);
         drawing.DrawText(name, new Point(textX, Math.Round(top + (15 - name.Height) / 2)));
         drawing.DrawText(detail!, new Point(textX, Math.Round(top + 15 + (13 - detail!.Height) / 2)));
     }
 
     // The figure in the display face with "%" small after it, on one baseline; "—" for a device that reports no battery.
-    private static void Figure(DrawingContext drawing, DeviceBattery device, string accent, double x, double top, double size, double line, double unitSize, double ppd, bool centered)
+    private void Figure(DrawingContext drawing, DeviceBattery device, string accent, double x, double top, double size, double line, double unitSize, double ppd, bool centered)
     {
         var number = MonitorDraw.Text(device.Lowest is { } p ? Devices.Clamp(p).ToString(System.Globalization.CultureInfo.InvariantCulture) : "—", size,
-            device.Lowest is null ? UI.Tertiary : accent, ppd, display: true);
-        var unit = device.Lowest is null ? null : MonitorDraw.Text("%", unitSize, UI.Secondary, ppd);
+            device.Lowest is null ? Look.Tertiary : accent, ppd, display: true);
+        var unit = device.Lowest is null ? null : MonitorDraw.Text("%", unitSize, Look.Secondary, ppd);
         double width = number.WidthIncludingTrailingWhitespace + (unit is null ? 0 : 1 + unit.WidthIncludingTrailingWhitespace);
         double left = Math.Round(centered ? x - width / 2 : x), y = Math.Round(top + (line - number.Height) / 2);
         drawing.DrawText(number, new Point(left, y));
@@ -402,14 +404,16 @@ internal sealed class DevicesView : FrameworkElement
     }
 
     // The charging green, made to stand out from the theme's surface as a graphic (a lighter theme gets a darker green).
-    internal static string Charging => PanelTheme.Readable("#6BD68A");
+    internal static string ChargingOn(PanelLook look) => look.Readable("#6BD68A");
+    internal static string Charging => ChargingOn(PanelTheme.Main);
 
     // A ring: the theme's ring track all round, and the share as an arc from the top, clockwise, with round ends. share null: the
     // track alone. track: the track's color, the panel theme's ring track when not given.
-    internal static void Ring(DrawingContext drawing, Point center, double size, double stroke, double? share, string color, string? track = null)
+    internal static void Ring(DrawingContext drawing, Point center, double size, double stroke, double? share, string color, string? track = null, PanelLook? look = null)
     {
+        var Look = look ?? PanelTheme.Main;
         double radius = (size - stroke) / 2;
-        drawing.DrawEllipse(null, DeviceGlyphs.Stroke(track ?? PanelTheme.Hex("ringTrack"), stroke), center, radius, radius);
+        drawing.DrawEllipse(null, DeviceGlyphs.Stroke(track ?? Look.Hex("ringTrack"), stroke), center, radius, radius);
         if (share is { } s && s > .002) Arc(drawing, center, radius, stroke, 0, s, color);
     }
 
@@ -431,14 +435,15 @@ internal sealed class DevicesView : FrameworkElement
 
     // The charging mark: a disc in the ring's (charging) color on the ring at its lower right, set off from it by the page's own color, with
     // a bolt in that color inside.
-    internal static void Badge(DrawingContext drawing, Point center, double radius, double size, string color)
+    internal static void Badge(DrawingContext drawing, Point center, double radius, double size, string color, PanelLook? look = null)
     {
+        var Look = look ?? PanelTheme.Main;
         var at = new Point(center.X + radius * .7071, center.Y + radius * .7071);
         double cut = Math.Max(1.5, size * .18);
-        drawing.DrawEllipse(UI.Brush(PanelTheme.Hex("surface")), null, at, size / 2 + cut, size / 2 + cut);
+        drawing.DrawEllipse(UI.Brush(Look.Hex("surface")), null, at, size / 2 + cut, size / 2 + cut);
         drawing.DrawEllipse(UI.Brush(color), null, at, size / 2, size / 2);
         double bolt = size * .66;
-        DeviceGlyphs.Bolt(drawing, new Rect(at.X - bolt / 2, at.Y - bolt / 2, bolt, bolt), PanelTheme.Hex("surface"));
+        DeviceGlyphs.Bolt(drawing, new Rect(at.X - bolt / 2, at.Y - bolt / 2, bolt, bolt), Look.Hex("surface"));
     }
 }
 
@@ -447,10 +452,12 @@ internal sealed class DevicesView : FrameworkElement
 // theme's surface; as text (the figure, the line under the name) it is moved to read at 4.5:1. While normal the figure keeps the
 // text color; getting low, the line under the name does too (the warning amber reads poorly as small text on light themes). In
 // high contrast the system's highlight and text colors.
-internal sealed class DeviceInks(MonitorColors colors, IReadOnlyList<DeviceChoice> choices, int warning, int low)
+internal sealed class DeviceInks(MonitorColors colors, IReadOnlyList<DeviceChoice> choices, int warning, int low, PanelLook? look = null)
 {
+    // The look of the panel the devices are drawn on.
+    private readonly PanelLook Look = look ?? PanelTheme.Main;
     // What the colors were made from, so a page built with them is built again when they change.
-    public string Key => string.Join("|", warning, low, colors.Warning, colors.Critical, PanelTheme.Generation, SystemParameters.HighContrast,
+    public string Key => string.Join("|", warning, low, colors.Warning, colors.Critical, Look.Generation, SystemParameters.HighContrast,
         string.Join(",", choices.Select(choice => $"{choice.Key}:{choice.Color}:{choice.ChargeColor}:{choice.WarningColor}:{choice.CriticalColor}")));
     public MemoryLevel Level(DeviceBattery device) => Devices.Level(device.Lowest, device.Charging, warning, low);
     private static bool Charging(DeviceBattery device) => device.Charging && device.Lowest is not null;
@@ -459,34 +466,34 @@ internal sealed class DeviceInks(MonitorColors colors, IReadOnlyList<DeviceChoic
     {
         if (SystemParameters.HighContrast) return SystemColors.HighlightColor.ToString();
         var own = DeviceLists.Find(choices, device.Key);
-        if (Charging(device)) return Graphic(own?.ChargeColor) ?? DevicesView.Charging;
+        if (Charging(device)) return Graphic(own?.ChargeColor) ?? DevicesView.ChargingOn(Look);
         return Level(device) switch
         {
             MemoryLevel.Critical => Graphic(own?.CriticalColor) ?? colors.Critical,
             MemoryLevel.Elevated => Graphic(own?.WarningColor) ?? colors.Warning,
-            _ => Graphic(own?.Color) ?? UI.Primary
+            _ => Graphic(own?.Color) ?? Look.Primary
         };
     }
     public string Figure(DeviceBattery device)
     {
         if (SystemParameters.HighContrast) return SystemColors.WindowTextColor.ToString();
-        return Charging(device) || Level(device) == MemoryLevel.Normal ? UI.Primary : Text(Ring(device));
+        return Charging(device) || Level(device) == MemoryLevel.Normal ? Look.Primary : Text(Ring(device));
     }
     public string Detail(DeviceBattery device)
     {
         if (SystemParameters.HighContrast) return SystemColors.WindowTextColor.ToString();
-        return Charging(device) || Level(device) == MemoryLevel.Critical ? Text(Ring(device)) : UI.Tertiary;
+        return Charging(device) || Level(device) == MemoryLevel.Critical ? Text(Ring(device)) : Look.Tertiary;
     }
 
-    private static string? Graphic(string? color) => color is null ? null : PanelTheme.Readable(color);
+    private string? Graphic(string? color) => color is null ? null : Look.Readable(color);
     // By theme (a color readable on a light theme is not on a dark one).
     private static readonly Dictionary<(int Theme, string Color), string> TextColors = [];
-    public static string Text(string color)
+    public string Text(string color)
     {
-        var key = (PanelTheme.Generation, color);
+        var key = (Look.Generation, color);
         if (TextColors.TryGetValue(key, out var readable)) return readable;
         if (TextColors.Count > 32) TextColors.Clear();
-        return TextColors[key] = PanelTheme.Readable(color, 4.6);
+        return TextColors[key] = Look.Readable(color, 4.6);
     }
 }
 
