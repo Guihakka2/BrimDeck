@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -15,10 +17,10 @@ namespace BrimDeck.Native;
 // nothing is drawn over the flyout above the taskbar. Both band calls are undocumented; where either is missing or refused,
 // the mirror stays off and the island is covered as before.
 //
-// Presses, releases and wheel turns over the mirror are passed to the panel (Pointer), so the island and the open panel's part
-// over the taskbar take clicks and the wheel as they do themselves; hovering the island opens it as always, as the panel reads
-// the pointer's place. After a flyout closes, the taskbar can stay lifted for a few seconds while the pointer is over it, and
-// the mirror stays with it.
+// The mouse over the mirror reaches the panel: moves are handed on so its hover states follow (Hover), and presses, releases and
+// wheel turns are raised in it at the same place (Pointer), so the island and the open panel's part over the taskbar are
+// hovered, clicked and scrolled as they are themselves. After a flyout closes, the taskbar can stay lifted for a few seconds
+// while the pointer is over it, and the mirror stays with it.
 internal sealed class TaskbarMirror : IDisposable
 {
     private const uint DesktopBand = 1, SwitcherBand = 16;
@@ -41,10 +43,13 @@ internal sealed class TaskbarMirror : IDisposable
     private RenderTargetBitmap? _picture;
     private bool _shown, _unavailable;
 
+    // The panel's window.
+    private readonly Func<IntPtr> _panel;
+
     // pointer: a mouse message over the mirror, its place on screen in physical pixels and a wheel turn; true when handled.
-    public TaskbarMirror(Visual stage, Func<Rect?> strip, Func<Rect?> region, Func<bool> wanted, Action raise, Func<uint, Point, int, bool> pointer)
+    public TaskbarMirror(Visual stage, Func<Rect?> strip, Func<Rect?> region, Func<bool> wanted, Action raise, Func<uint, Point, int, bool> pointer, Func<IntPtr> panel)
     {
-        _stage = stage; _strip = strip; _region = region; _wanted = wanted; _raise = raise; _pointer = pointer;
+        _stage = stage; _strip = strip; _region = region; _wanted = wanted; _raise = raise; _pointer = pointer; _panel = panel;
         _frame.Tick += (_, _) => Frame();
         _follow.Tick += (_, _) => { Check(); if (_shown || --_followTicks <= 0) _follow.Stop(); };
     }
@@ -67,7 +72,7 @@ internal sealed class TaskbarMirror : IDisposable
 
     private void Frame()
     {
-        if (_wanted() && Covered() is { } part) { Draw(part); return; }
+        if (_wanted() && Covered() is { } part) { Draw(part); CheckHover(); return; }
         _raise();
         Hide();
     }
@@ -105,6 +110,7 @@ internal sealed class TaskbarMirror : IDisposable
     {
         _frame.Stop();
         if (GetCapture() == _window) ReleaseCapture();
+        CheckHover(end: true);
         if (!_shown) return;
         _shown = false;
         ShowWindow(_window, 0); // SW_HIDE
@@ -148,16 +154,16 @@ internal sealed class TaskbarMirror : IDisposable
             case 0x0021: return new IntPtr(3); // WM_MOUSEACTIVATE: MA_NOACTIVATE, the click is delivered without taking focus.
             // WM_SETCURSOR over the drawn island: the pointer keeps the shape the panel gives it.
             case 0x0020 when ((long)lParam & 0xFFFF) == 1: return new IntPtr(1);
+            case 0x0200 when Mirrors.TryGetValue(window, out var hovered) && hovered.Hover(wParam, lParam): return IntPtr.Zero;
             case >= 0x0201 and <= 0x020E when Mirrors.TryGetValue(window, out var mirror) && mirror.Pointer(message, wParam, lParam): return IntPtr.Zero;
         }
         return DefWindowProc(window, message, wParam, lParam);
     }
 
     // Passes a press, a release or a wheel turn over the mirror to the panel, with its place on screen in physical pixels; the
-    // panel acts on it as on the same place of itself (MainWindow.MirrorPointer). Mouse messages themselves cannot be handed
-    // over: WPF takes no mouse input for its window while the pointer is over another window, and messages sent to the panel
-    // were seen to raise no mouse events in it even while it held the capture. While a button is held over the mirror, the
-    // mirror holds the capture, so the release comes back to it.
+    // panel raises them as its own mouse events at the same place (MainWindow.MirrorPointer). Pressed messages handed to the
+    // panel itself were seen to raise no press in it. While a button is held over the mirror, the mirror holds the capture, so
+    // the release comes back to it.
     private bool Pointer(uint message, IntPtr wParam, IntPtr lParam)
     {
         var point = new POINT { X = unchecked((short)(long)lParam), Y = unchecked((short)((long)lParam >> 16)) };
@@ -171,6 +177,75 @@ internal sealed class TaskbarMirror : IDisposable
         if (message is 0x0201 or 0x0204 or 0x0207) SetCapture(_window);       // WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN
         else if (message is 0x0202 or 0x0205 or 0x0208 && GetCapture() == _window) ReleaseCapture();
         return handled;
+    }
+
+    // The pointer's moves over the mirror are handed to the panel as mouse moves at the same place, so the panel's hover states
+    // (a row's highlight, a button's) follow the pointer there.
+    //
+    // WPF drops mouse input as spurious while its window is inactive and the pointer is over another window, unless the window
+    // holds the mouse capture, so the panel holds it for the move. Once active, WPF would go inactive again on the capture going
+    // back and on the leave its own mouse tracking reports (the pointer is not over its window), so the panel's hook keeps both
+    // from it while the pointer is over the mirror (PanelMessages); a capture held between moves would keep the pointer's own
+    // clicks from the mirror, for a window not in the foreground gets the mouse only where it can be seen.
+    private bool _hooked, _hovering, _forwarding;
+    private IntPtr _lastMove = new(-1), _lastKeys = new(-1);
+    private bool Hover(IntPtr wParam, IntPtr lParam)
+    {
+        var panel = _panel();
+        if (panel == IntPtr.Zero) return false;
+        if (!_hooked && HwndSource.FromHwnd(panel) is { } source)
+        {
+            source.AddHook(PanelMessages);
+            InputManager.Current.PreProcessInput += KeepForwarded;
+            _hooked = true;
+        }
+        // Giving and taking back the capture makes Windows send the window under the pointer a move of its own; a move to the
+        // same place with the same buttons is not handed on again.
+        if (_hovering && lParam == _lastMove && wParam == _lastKeys) return true;
+        _lastMove = lParam; _lastKeys = wParam;
+        _hovering = true;
+        var point = new POINT { X = unchecked((short)(long)lParam), Y = unchecked((short)((long)lParam >> 16)) };
+        ClientToScreen(_window, ref point);
+        ScreenToClient(panel, ref point);
+        bool own = GetCapture() == panel;
+        if (!own) SetCapture(panel);
+        _forwarding = true;
+        try { SendMessage(panel, 0x0200, wParam, new IntPtr((point.Y << 16) | (point.X & 0xFFFF))); }
+        finally { _forwarding = false; }
+        if (!own && GetCapture() == panel) ReleaseCapture();
+        return true;
+    }
+    // While the pointer is over the mirror, the panel takes no mouse input but the moves handed on. WPF looks again at what is
+    // under the pointer after a layout (a "synchronize"), asks Windows which window is there, finds the mirror's, and put the
+    // pointer over nothing in the panel: the panel redraws its readings all the time, and a hover highlight did not stay.
+    private void KeepForwarded(object sender, PreProcessInputEventArgs e)
+    {
+        // The raw report's type is internal to WPF and is known by name; under another name nothing is held back.
+        var input = e.StagingItem.Input;
+        if (_hovering && !_forwarding && input.Device is MouseDevice && input.GetType().Name == "InputReportEventArgs") e.Cancel();
+    }
+    private IntPtr PanelMessages(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (_hovering && message is 0x02A3 or 0x0215) handled = true; // WM_MOUSELEAVE, WM_CAPTURECHANGED
+        return IntPtr.Zero;
+    }
+    // Each frame, and when the mirror leaves: once the pointer has left the mirror, the panel gets the pointer as usual again.
+    // Over the panel itself, its mouse tracking is started again so that it learns when the pointer leaves; elsewhere it is told
+    // the pointer has left.
+    private void CheckHover(bool end = false)
+    {
+        if (!_hovering) return;
+        GetCursorPos(out var cursor);
+        if (!end && WindowFromPoint(cursor) == _window) return;
+        _hovering = false;
+        _lastMove = _lastKeys = new IntPtr(-1);
+        var panel = _panel();
+        if (WindowFromPoint(cursor) == panel)
+        {
+            var track = new TRACKMOUSEEVENT { Size = Marshal.SizeOf<TRACKMOUSEEVENT>(), Flags = 2, Window = panel }; // TME_LEAVE
+            TrackMouseEvent(ref track);
+        }
+        else SendMessage(panel, 0x02A3, IntPtr.Zero, IntPtr.Zero); // WM_MOUSELEAVE
     }
 
     // Draws the given part of the island as it is now into the mirror, at that part's place on screen. The island's place on
@@ -218,6 +293,7 @@ internal sealed class TaskbarMirror : IDisposable
     {
         _frame.Stop(); _follow.Stop();
         if (GetCapture() == _window) ReleaseCapture();
+        if (_hooked) InputManager.Current.PreProcessInput -= KeepForwarded;
         if (_window != IntPtr.Zero) { Mirrors.Remove(_window); DestroyWindow(_window); }
         if (_memory != IntPtr.Zero) DeleteDC(_memory);
         if (_bitmap != IntPtr.Zero) DeleteObject(_bitmap);
@@ -248,6 +324,12 @@ internal sealed class TaskbarMirror : IDisposable
     [DllImport("user32")] private static extern IntPtr GetCapture();
     [DllImport("user32")] private static extern bool ReleaseCapture();
     [DllImport("user32")] private static extern bool ClientToScreen(IntPtr window, ref POINT point);
+    [DllImport("user32")] private static extern bool ScreenToClient(IntPtr window, ref POINT point);
+    [DllImport("user32")] private static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32", EntryPoint = "SendMessageW")] private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public int Size; public uint Flags; public IntPtr Window; public uint HoverTime; }
+    [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT track);
     [DllImport("user32", CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowInBand(uint exStyle, string className, string title, uint style,
         int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter, uint band);
     [DllImport("user32")] private static extern bool GetWindowBand(IntPtr window, out uint band);

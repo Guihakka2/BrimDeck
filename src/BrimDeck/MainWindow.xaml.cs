@@ -121,7 +121,7 @@ public partial class MainWindow : Window
         // The island stays in sight over a taskbar that Start or search has lifted above every application window.
         _taskbarMirror = new TaskbarMirror(Stage, IslandStrip, IslandRegion,
             () => IsVisible && KeepsAbove && !IsSuppressed && !_hiding && _moveOverlay is null && HoverZone.Opacity > 0,
-            _host.CheckOrder, MirrorPointer);
+            _host.CheckOrder, MirrorPointer, () => new WindowInteropHelper(this).Handle);
         _host.OrderChecked += _taskbarMirror.Check;
         _host.ForegroundSwitched += _taskbarMirror.Follow;
         _handover = new PageHandover(LeavingContent);
