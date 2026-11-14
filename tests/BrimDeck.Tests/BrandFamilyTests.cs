@@ -24,12 +24,17 @@ static class BrandFamilyTests
             && BrimDeck.Core.VgnV108.Battery(reply) == new BatteryRead(100) && BrimDeck.Core.VgnV108.Battery(charging) == new BatteryRead(50, true)
             && BrimDeck.Core.VgnV108.Battery([.. reply[..^1], 0]) is null
             && BrimDeck.Core.VgnV108.Battery(Bytes("13 4A 01 00 02 65 01 00 00 00 00 00 00 00 00 00 00 00 00 C6")) is null
+            && BrimDeck.Core.VgnV108.Battery(Bytes("13 4A 01 00 02 00 01 00 00 00 00 00 00 00 00 00 00 00 00 61")) is null
             && BrimDeck.Core.VgnV108.Battery(BrimDeck.Core.VgnV108.Request()) is null);
-        check("VGN V108: only interface 1 of 391D:2A02, with 20-byte reports and report 0x13 declared",
-            BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 25, 20, outputIds: [0x13])) is { Family.Brand: "VGN V108", Ways.Count: 1 }
-            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 0, 8, 1, outputIds: [0x00])) is null
-            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 19, 20, outputIds: [0x13])) is null
-            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 25, 20, outputIds: [0x01])) is null
+        check("VGN V108: only interface 1 of 391D:2A02, with 20-byte reports and report 0x13 declared, never a standard collection",
+            BrandFamilies.Find(Shape(0x391D, 0x2A02, 0xFF02, 0x0002, 1, 25, 20, outputIds: [0x13])) is { Family.Brand: "VGN V108", Ways.Count: 1 }
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0000, 1, 25, 20, outputIds: [0x13])) is { Family.Brand: "VGN V108", Ways.Count: 1 }
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0006, 1, 25, 20, outputIds: [0x13])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x0001, 0x0080, 1, 25, 20, outputIds: [0x13])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0x000C, 0x0001, 1, 25, 20, outputIds: [0x13])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0xFF02, 0x0002, 0, 8, 1, outputIds: [0x00])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0xFF02, 0x0002, 1, 19, 20, outputIds: [0x13])) is null
+            && BrandFamilies.Find(Shape(0x391D, 0x2A02, 0xFF02, 0x0002, 1, 25, 20, outputIds: [0x01])) is null
             && BrandFamilies.Find(Shape(0x391D, 0x2A05, 0xFF00, 0x0001, 1, 25, 20, outputIds: [0x13])) is not { Family.Brand: "VGN V108" });
     }
 
@@ -64,10 +69,12 @@ static class BrandFamilyTests
             && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x0001, 5, outputIds: [0x02])) is null && BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x00FF, 1, outputIds: [0x02])) is null);
         check("BETOP: not sent where the collection declares no report 0x02",
             BrandFamilies.Find(Shape(0x20BC, 0x5191, 0x00FF, 3, outputIds: [0x01])) is { Ways.Count: 0 });
-        check("BETOP: the request, a reading on battery and one charging (the Kunpeng 20's capture), and the request read back is none",
+        check("BETOP: the request, a reading on battery and one charging (the Kunpeng 20's capture, vigil-watt's 93 %), and the request read back and a level of 0 are none",
             BrimDeck.Core.Betop.Request().SequenceEqual(new byte[] { 0x02, 0x15 })
             && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x64, 0x00, 0x51, 0x01, 0x01, 0x00]) == new BatteryRead(100, true)
+            && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x5D, 0x00, 0x50]) == new BatteryRead(93)
             && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x37, 0x00, 0x50]) == new BatteryRead(55)
+            && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x00, 0x00, 0x50]) is null
             && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x00, 0x00, 0x00]) is null && BrimDeck.Core.Betop.Battery([0x02, 0x15, 0x99, 0x00, 0x50]) is null
             && BrimDeck.Core.Betop.Battery([0x02, 0x12, 0x40, 0x00, 0x50]) is null);
     }

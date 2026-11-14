@@ -40,11 +40,15 @@ static class BrandsControllerTests
     {
         var apex5 = BrandFamilies.Find(Shape(0x37D7, 0x2501, 0xFFA0, 1, 2, 33, 33, [0x03]));
         var vader5 = BrandFamilies.Find(Shape(0x37D7, 0x2401, 0xA0FF, 1, 1, 33, 33, [0x00]));
-        check("Flydigi: any 37D7 vendor collection 0xFFA0:1 (either byte order) takes the info read, numbered where it declares report 0x03",
+        check("Flydigi: the Vader 5 Pro's, Apex 5's and Apex 6's vendor collection 0xFFA0:1 (either byte order) takes the info read, numbered where it declares report 0x03",
             apex5 is { Family.Brand: "Flydigi" } && Names(apex5).SequenceEqual(["flydigi.info"])
             && apex5.Value.Ways[0].Request.SequenceEqual(new byte[] { 0x03, 0x5A, 0xA5, 0x01, 0x02, 0x00 })
             && vader5 is { Family.Brand: "Flydigi" } && vader5.Value.Ways[0].Request.SequenceEqual(new byte[] { 0x00, 0x5A, 0xA5, 0x01, 0x02, 0x00 })
-            && BrandFamilies.Find(Shape(0x37D7, 0x2BAD, 0xFFA0, 1, input: 33, outputIds: [0x00])) is { Family.Brand: "Flydigi" });
+            && BrandFamilies.Find(Shape(0x37D7, 0x2502, 0xFFA0, 1, input: 33, outputIds: [0x00])) is { Family.Brand: "Flydigi" });
+        // HaloBattery #191's diagnostics: VID=37d7 PID=6001 if=0 usage=ffa0:0001 'flydigi' 'Flydigi CD2'.
+        check("Flydigi: not the CD2 charging dock on the same page, nor another 37D7 product",
+            BrandFamilies.Find(Shape(0x37D7, 0x6001, 0xFFA0, 1, 0, 65, 65, [0x00])) is null
+            && BrandFamilies.Find(Shape(0x37D7, 0x2BAD, 0xFFA0, 1, input: 33, outputIds: [0x00])) is null);
         check("Flydigi: not its gamepad, another usage, a short collection or another vendor (Cypress 04B4 is the old chip)",
             BrandFamilies.Find(Shape(0x37D7, 0x2401, 0x01, 5, outputIds: [0x00])) is null && BrandFamilies.Find(Shape(0x37D7, 0x2401, 0xFFA0, 2, outputIds: [0x00])) is null
             && BrandFamilies.Find(Shape(0x37D7, 0x2401, 0xFFA0, 1, input: 16, outputIds: [0x00])) is null
@@ -70,12 +74,18 @@ static class BrandsControllerTests
             && apex5Way.Parse(BrandFamilies.Frame(33, 0x03, 0x5A, 0xA5, 0x01, 0x02, 0x00)) is null
             && apex5Way.Parse(BrandFamilies.Frame(33, 0x03, 0x5A, 0xA5, 0xEF, 0x01, 0x82)) is null && apex5Way.Parse(new byte[33]) is null
             && apex5Way.Parse(Info(0x03)[..20]) is null);
-        check("Flydigi: Windows.Gaming.Input's 1000 of 1000 is a placeholder for Flydigi's pads only",
-            BrimDeck.Core.Flydigi.WindowsPlaceholder(0x37D7, 0x2401, "Flydigi Vader 5 Pro", 1000, 1000)
-            && BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x028E, "FLYDIGI VADER4", 1000, 1000)
-            && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x028E, "Xbox 360 Controller", 1000, 1000)
-            && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x0B13, "Xbox Wireless Controller", 1000, 1000)
+        // #191: the Vader 5 Pro on 37d7:2401 and the Vader 4 Pro on 045e:028e, both 'Xbox 360 Controller for Windows' to
+        // Windows.Gaming.Input; the Vader 4's HID gamepad collection is 'Controller (Flydigi VADER4)'.
+        check("Flydigi: Windows.Gaming.Input's 1000 of 1000 is a placeholder for Flydigi's pads only, the Vader 4 Pro known by its HID name",
+            BrimDeck.Core.Flydigi.WindowsPlaceholder(0x37D7, 0x2401, null, 1000, 1000)
+            && BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x028E, "Controller (Flydigi VADER4)", 1000, 1000)
+            && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x028E, "Controller (XBOX 360 For Windows)", 1000, 1000)
+            && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x028E, null, 1000, 1000)
+            && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x045E, 0x0B13, null, 1000, 1000)
             && !BrimDeck.Core.Flydigi.WindowsPlaceholder(0x37D7, 0x2401, null, 640, 1000));
+        check("Flydigi: only the pads read over HID are left out of Windows.Gaming.Input's list",
+            BrimDeck.Core.Flydigi.ReadOverHid(0x37D7, 0x2401) && BrimDeck.Core.Flydigi.ReadOverHid(0x37D7, 0x2502)
+            && !BrimDeck.Core.Flydigi.ReadOverHid(0x37D7, 0x6001) && !BrimDeck.Core.Flydigi.ReadOverHid(0x045E, 0x028E));
     }
 
     private static void GameSir(Action<string, bool> check)
@@ -99,9 +109,13 @@ static class BrandsControllerTests
 
         // GamesirBatteryTray's README: 00 | 01 F4 96 50 03 25 | ... 28 00 ... | 49 is 73 %.
         var readme = Frame(65, (1, 0x01), (2, 0xF4), (3, 0x96), (4, 0x50), (5, 0x03), (6, 0x25), (11, 0x28), (19, 0x49));
-        check("GameSir: the status answer's percent; the request read back, a MAC of zeros and over 100 are none",
-            BrimDeck.Core.GameSir.Status(readme) == new BatteryRead(73) && BrimDeck.Core.GameSir.Status(BrandFamilies.Frame(65, 0x00, 0x01, 0x01, 0x00)) is null
+        var cable = (byte[])readme.Clone(); cable[19] = 0xFF;
+        var empty = (byte[])readme.Clone(); empty[19] = 0x00;
+        check("GameSir: the status answer's percent, FF on the cable charging without one; the request read back, a MAC of zeros, 0 and over 100 are none",
+            BrimDeck.Core.GameSir.Status(readme) == new BatteryRead(73) && BrimDeck.Core.GameSir.Status(cable) == new BatteryRead(null, true)
+            && BrimDeck.Core.GameSir.Status(BrandFamilies.Frame(65, 0x00, 0x01, 0x01, 0x00)) is null
             && BrimDeck.Core.GameSir.Status(Frame(65, (19, 0x49))) is null && BrimDeck.Core.GameSir.Status(Frame(65, (1, 0x01), (19, 0x65))) is null
+            && BrimDeck.Core.GameSir.Status(Frame(65, (19, 0xFF))) is null && BrimDeck.Core.GameSir.Status(empty) is null
             && BrimDeck.Core.GameSir.Status([0x01, .. readme[1..]]) is null && BrimDeck.Core.GameSir.Status(readme[..19]) is null);
         // agnostos-t's G7 Pro 8K: 81 % off the dock, 87 % charging; the Tarantula CE's bytes are 27 and 28.
         var g7Way = g7!.Value.Ways[0];
@@ -109,8 +123,9 @@ static class BrandsControllerTests
         check("GameSir: report 0x12's percent and charging bit, at 36 and 35 (27 and 28 on the Tarantula CE)",
             g7Way.Parse(Frame(64, (0, 0x12), (36, 81))) == new BatteryRead(81) && g7Way.Parse(Frame(64, (0, 0x12), (35, 1), (36, 87))) == new BatteryRead(87, true)
             && tarantula.Parse(Frame(64, (0, 0x12), (27, 1), (28, 50))) == new BatteryRead(50, true) && tarantula.Parse(Frame(64, (0, 0x12), (28, 101))) is null);
-        check("GameSir: another report, over 100, a report of zeros and the heartbeat are none",
+        check("GameSir: another report, over 100, a level of 0 (the stream not ready), a report of zeros and the heartbeat are none",
             g7Way.Parse(Frame(64, (0, 0x10), (36, 81))) is null && g7Way.Parse(Frame(64, (0, 0x12), (36, 255))) is null
+            && g7Way.Parse(Frame(64, (0, 0x12), (1, 0x80), (35, 1))) is null && tarantula.Parse(Frame(64, (0, 0x12), (5, 0x80))) is null
             && g7Way.Parse(Frame(64, (0, 0x12))) is null && g7Way.Parse(BrandFamilies.Frame(64, 0x0F, 0xF2, 0x00)) is null
             && g7Way.Parse(Frame(36, (0, 0x12), (35, 1))) is null);
     }
@@ -118,12 +133,15 @@ static class BrandsControllerTests
     private static void EightBitDo(Action<string, bool> check)
     {
         var pro3 = BrandFamilies.Find(Shape(0x2DC8, 0x6009, 0x01, 5, input: 64, outputIds: [0x00]));
-        check("8BitDo: any 2DC8 gamepad or joystick collection is listened to, nothing sent",
+        check("8BitDo: the gamepad or joystick collection of a pad SDL reads the level of is listened to, nothing sent",
             pro3 is { Family.Brand: "8BitDo" } && Names(pro3).SequenceEqual(["8bitdo.report"]) && pro3.Value.Ways[0] is { Transport: WayTransport.Listen, Request.Length: 0 }
-            && Names(BrandFamilies.Find(Shape(0x2DC8, 0x6003, 0x01, 4, input: 64))).SequenceEqual(["8bitdo.report"]));
-        check("8BitDo: not its keyboard or mouse, a vendor collection, a report too short or another vendor",
+            && Names(BrandFamilies.Find(Shape(0x2DC8, 0x6003, 0x01, 4, input: 64))).SequenceEqual(["8bitdo.report"])
+            && new[] { 0x6000, 0x6100, 0x6001, 0x6101, 0x6006, 0x6012, 0x202F }.All(product => Names(BrandFamilies.Find(Shape(0x2DC8, product, 0x01, 5, input: 64))).Length == 1));
+        check("8BitDo: not its keyboard or mouse, a vendor collection, a report too short, the Ultimate 2C, another 8BitDo product or another vendor",
             BrandFamilies.Find(Shape(0x2DC8, 0x5200, 0x01, 6)) is null && BrandFamilies.Find(Shape(0x2DC8, 0x5200, 0x01, 2)) is null
             && BrandFamilies.Find(Shape(0x2DC8, 0x6009, 0xFF00, 1)) is null && BrandFamilies.Find(Shape(0x2DC8, 0x6000, 0x01, 5, input: 9)) is null
+            && BrandFamilies.Find(Shape(0x2DC8, 0x301B, 0x01, 5, input: 12)) is null && BrandFamilies.Find(Shape(0x2DC8, 0x301B, 0x01, 5)) is null
+            && BrandFamilies.Find(Shape(0x2DC8, 0x3106, 0x01, 5)) is null && BrandFamilies.Find(Shape(0x2DC8, 0x5006, 0x01, 4)) is null
             && BrandFamilies.Find(Shape(0x2DC9, 0x6009, 0x01, 5)) is null);
         // HaloBattery's Pro 3 report, read on hardware: 20 %.
         byte[] real = [0x04, 0x0F, 0x80, 0x7F, 0x7F, 0x80, 0, 0, 0, 0, 0, 0, 0x09, 0x60, 0x14, 0xD7, 0xFB, 0xF6, 0xFF, 0xAA, 0x0F, 0x09, 0, 0x05, 0, 0x10, 0, 0xD0, 0x8E, 0x75, 0x01, 0x66];
@@ -146,8 +164,9 @@ static class BrandsControllerTests
             && BrandFamilies.Find(Shape(0x0955, 0x7214, 0x01, 5, outputIds: [0x01])) is { Ways.Count: 0 });
         // 03 07 00, voltages (average, thermistor, minimum, boot, present), then the percent at 14.
         var reply = Frame(65, (0, 0x03), (1, 0x07), (3, 0x0E), (4, 0x10), (6, 0x40), (7, 0x02), (8, 0xC4), (9, 0x0E), (10, 0x22), (11, 0x10), (12, 0x0E), (13, 0x10), (14, 73));
-        check("SHIELD: the answer's percent at byte 14; another command's answer, the request read back, zeros and over 100 are none",
+        check("SHIELD: the answer's percent at byte 14; another command's or another transaction's answer, the request read back, zeros and over 100 are none",
             BrimDeck.Core.NvidiaShield.Battery(reply) == new BatteryRead(73) && BrimDeck.Core.NvidiaShield.Battery(reply[..33]) == new BatteryRead(73)
+            && BrimDeck.Core.NvidiaShield.Battery([0x03, 0x07, 0x05, .. reply[3..]]) is null
             && BrimDeck.Core.NvidiaShield.Battery([0x03, 0x3A, .. reply[2..]]) is null && BrimDeck.Core.NvidiaShield.Battery(BrandFamilies.Frame(33, 0x04, 0x07, 0x00)) is null
             && BrimDeck.Core.NvidiaShield.Battery(Frame(65, (0, 0x03), (1, 0x07))) is null && BrimDeck.Core.NvidiaShield.Battery([.. reply[..14], 101]) is null
             && BrimDeck.Core.NvidiaShield.Battery(reply[..14]) is null);
@@ -158,10 +177,11 @@ static class BrandsControllerTests
         check("XInput: the Xbox 360 receiver's slots are product 0 with the wireless flag",
             XInputBattery.Receiver360Slot(0, 0x0002) && XInputBattery.Receiver360Slot(0, 0x000F) && !XInputBattery.Receiver360Slot(0, 0x0000)
             && !XInputBattery.Receiver360Slot(0x0B13, 0x0002));
-        check("XInput: four levels as SDL takes them, coarse; no level for wired, unknown or out of range; nothing for an empty slot",
+        check("XInput: four levels as SDL takes them, coarse; wired is charging without a level; no level for unknown or out of range; nothing for an empty slot",
             XInputBattery.Battery(0x02, 0) == new BatteryRead(10, Coarse: true) && XInputBattery.Battery(0x03, 1) == new BatteryRead(40, Coarse: true)
             && XInputBattery.Battery(0x03, 2) == new BatteryRead(70, Coarse: true) && XInputBattery.Battery(0x02, 3) == new BatteryRead(100, Coarse: true)
-            && XInputBattery.Battery(0x01, 3) == new BatteryRead(null) && XInputBattery.Battery(0xFF, 1) == new BatteryRead(null)
+            && XInputBattery.Battery(0x01, 3) == new BatteryRead(null, Charging: true) && XInputBattery.Battery(0x01, 0) == new BatteryRead(null, Charging: true)
+            && XInputBattery.Battery(0xFF, 1) == new BatteryRead(null)
             && XInputBattery.Battery(0x03, 4) == new BatteryRead(null) && XInputBattery.Battery(0x00, 3) is null);
     }
 }
