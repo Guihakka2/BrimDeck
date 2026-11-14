@@ -578,8 +578,12 @@ public partial class MainWindow
         menu.HorizontalOffset = -12 * _scale;
         menu.VerticalOffset = (atPointer ? -12 : 4 - 12) * _scale;
         UI.Scale(menu, _scale);
+        // The panel does not take the foreground, so a press in another app goes to that app and the menu never learns of it:
+        // the menu would stay open, and hold the panel open with it. A press outside this app's windows closes it.
+        var press = new PointerPressObserver(Dispatcher, point => { if (menu.IsOpen && !WindowsHost.OwnWindowAt(point)) menu.IsOpen = false; });
         menu.Closed += (_, _) =>
         {
+            press.Dispose();
             if (ReferenceEquals(_shelfMenu, menu)) _shelfMenu = null;
             Dispatcher.BeginInvoke(() => { if (_expanded && !_pointerInside && !ShelfHolds) PointerChanged(false); });
         };
