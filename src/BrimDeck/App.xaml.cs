@@ -546,8 +546,16 @@ public partial class App : Application
             Dispatcher.BeginInvoke(() => { if (error is null) _settingsWindow?.SaveStatus(""); else _settingsWindow?.SaveStatus(error, true); });
         }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
     }
-    // Before the process ends, the last write must have reached the disk.
-    private void FinishWriting() { try { _writing.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { } }
+    // The last usage readings (UsageLastSeen) are saved and cleared the same way, one after another in the order they were asked for:
+    // a save still running cannot write the file again after a later clear. Asked for on the UI thread, like FlushSettings.
+    private Task _keepingUsage = Task.CompletedTask;
+    internal void KeepUsage(Action work)
+        => _keepingUsage = _keepingUsage.ContinueWith(_ =>
+        {
+            try { work(); } catch (Exception ex) when (ex is not OutOfMemoryException) { System.Diagnostics.Debug.WriteLine(ex); }
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    // Before the process ends, the last writes of the settings and the usage readings must have reached the disk (five seconds for both).
+    private void FinishWriting() { try { Task.WaitAll([_writing, _keepingUsage], TimeSpan.FromSeconds(5)); } catch (AggregateException) { } }
     // The settings window records its size before the final save; closing it during shutdown would be too late.
     // Every panel powers off first (MainWindow.Lifecycle.cs): the islands draw back into dots that sink down through the floor, then the process ends. The
     // settings window goes at once, so the exit answers immediately. A panel that never reports back cannot hold the exit up:
