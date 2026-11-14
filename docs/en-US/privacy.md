@@ -47,6 +47,7 @@ All files are stored in `%LOCALAPPDATA%\BrimDeck`:
 | `themes\` | Custom panel theme files |
 | `sensor-stops.json`, `sensor-pending.json` | The system monitor readings stopped because the PC froze (the drive or graphics adapter model, the board model and BIOS version), and the readings under way, so a reading that froze the PC is found at the next start; a record is removed when the reading is turned on again in the settings |
 | `crash.log` | Error records; cleared when it exceeds 1 MB |
+| `monitor.log` | Records of failed system monitor readings (the error, and the name of a drive, graphics card or board whose reading did not respond); each failure is recorded at most once in ten minutes and no readings are included; cleared when it exceeds 1 MB |
 
 ## Network and security
 
