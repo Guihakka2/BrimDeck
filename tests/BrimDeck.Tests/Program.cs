@@ -61,6 +61,7 @@ try
     DeviceSafetyTests.Run(Check);
     DeviceReadTests.Run(Check);
     BrandFamilyTests.Run(Check);
+    BrandsGapTests.Run(Check);
     PowerTests.Run(Check);
     DevicesPageTests.Run(Check);
     FrameRateTests.Run(Check);
