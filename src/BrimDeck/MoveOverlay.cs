@@ -56,9 +56,9 @@ internal sealed class MoveOverlay : Window
     public void Pointer(Point point) => _ghost.Pointer(point);
     public void Release() => _ghost.Release();
 
-    public void FadeOut()
+    public void FadeOut(bool animate)
     {
-        if (!Soft.Enabled) { Close(); return; }
+        if (!animate) { Close(); return; }
         var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(170)) { EasingFunction = Soft.Out };
         fade.Completed += (_, _) => Close();
         BeginAnimation(OpacityProperty, fade);

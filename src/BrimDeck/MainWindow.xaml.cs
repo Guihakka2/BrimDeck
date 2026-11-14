@@ -103,6 +103,10 @@ public partial class MainWindow : Window
         return _ownLook.Use(Settings, reload, systemChanged) || created;
     }
     internal DeckSettings PanelSettings => Settings;
+    // Whether this panel animates: its own profile's "enable animations" (Soft.For), not the profile in use. Text too long for its
+    // place scrolls by TextScrolls, which high contrast does not stop.
+    private bool Animates => Soft.For(Settings);
+    private bool TextScrolls => Soft.Scrolls(Settings);
     public bool IsExpanded => _expanded;
     public bool IsSuppressed => !_preview && (Settings.Behavior(_context, _host.App.Name, _host.App.Path, _host.BackgroundKind) == WindowBehavior.Hide || HiddenByUser);
     // The panel is a topmost overlay: kept above other windows, or an ordinary panel a window rule turns into the indicator,
@@ -861,7 +865,7 @@ public partial class MainWindow : Window
         // motion-review C1, C4: closing takes three quarters of the set time; a move the keyboard asked for takes 0.6 of it. The
         // open panel changing size in place (a page switch) keeps its own length whatever the setting (PanelMotion.Reshape).
         bool turning = wasExpanded != expanded;
-        int duration = !instant && Soft.Enabled
+        int duration = !instant && Animates
             ? expanded && !turning ? PanelMotion.Reshape : PanelMotion.Length(Settings.AnimationDuration, closing: turning && !expanded, keyboard: keyboard && turning) : 0;
         // motion-review F1, F2: turned back while the last opening or closing is still under way (the pointer left an opening
         // panel, or came back to a closing one), the surface starts back from where it is at once, in the share of the move it

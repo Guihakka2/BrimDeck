@@ -273,7 +273,7 @@ public partial class MainWindow
             double x = button.TranslatePoint(new Point(), host).X, width = button.ActualWidth;
             fill.Height = button.ActualHeight; fill.Visibility = Visibility.Visible;
             // Only a strip that replaces one just chosen in glides; one shown afresh (model details opened again) starts in place.
-            bool slide = SegmentFills.TryGetValue(glide, out var was) && Environment.TickCount64 - was.At < 1500 && Soft.Enabled && strip.IsVisible && Math.Abs(was.X - x) > .5;
+            bool slide = SegmentFills.TryGetValue(glide, out var was) && Environment.TickCount64 - was.At < 1500 && Animates && strip.IsVisible && Math.Abs(was.X - x) > .5;
             SegmentFills[glide] = (x, width, 0);
             shift.X = x; fill.Width = width;
             if (!slide) return;
@@ -583,7 +583,7 @@ public partial class MainWindow
             TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         number.Inlines.Add(new Run("—%") { FontSize = layout.Number, FontWeight = FontWeights.SemiBold, Foreground = UI.Brush(Look.Tertiary) });
         Grid.SetRow(number, 2); block.Children.Add(number);
-        var track = new QuotaBar($"{entry.InstanceId:N}:{slot}", 0, Look.AppTheme(entry)); Grid.SetRow(track, 4);
+        var track = new QuotaBar($"{entry.InstanceId:N}:{slot}", 0, Look.AppTheme(entry), Animates); Grid.SetRow(track, 4);
         block.Children.Add(track);
         AutomationProperties.SetName(block, Loc.T("正在读取配额", "Reading the quota"));
         return block;
@@ -671,7 +671,7 @@ public partial class MainWindow
             right.Margin = new Thickness(6, 0, 0, 1); Grid.SetColumn(right, 1); numbers.Children.Add(right);
         }
         block.Children.Add(numbers);
-        var track = new QuotaBar($"{entry.InstanceId:N}:{slot}", (left ? 100 - used : used) / 100, color); Grid.SetRow(track, 4);
+        var track = new QuotaBar($"{entry.InstanceId:N}:{slot}", (left ? 100 - used : used) / 100, color, Animates); Grid.SetRow(track, 4);
         block.Children.Add(track);
         return block;
     }

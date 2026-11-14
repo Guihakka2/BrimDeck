@@ -16,7 +16,8 @@ internal sealed class QuotaBar : FrameworkElement
     private readonly string _key, _color;
     private Eased _share;
 
-    public QuotaBar(string key, double share, string color)
+    // animate: the panel's own "enable animations" (MainWindow.Animates); the bar is not in a window yet.
+    public QuotaBar(string key, double share, string color, bool animate)
     {
         _key = key; _color = color;
         share = Math.Clamp(double.IsFinite(share) ? share : 0, 0, 1);
@@ -24,7 +25,7 @@ internal sealed class QuotaBar : FrameworkElement
         if (Shown.Count > 256) Shown.Clear();
         Shown[key] = share;
         SnapsToDevicePixels = true;
-        if (_share.Set(share, Soft.Enabled)) Loaded += (_, _) => Motion.Start(this, Step);
+        if (_share.Set(share, animate)) Loaded += (_, _) => Motion.Start(this, Step);
     }
 
     private bool Step(double now) { InvalidateVisual(); return _share.Moving(now); }

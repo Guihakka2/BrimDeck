@@ -72,7 +72,7 @@ public partial class MainWindow
         }
         if (CurrentPage != DeckPage.Devices || _devicesView is null) return;
         if (DevicesKey() != _devicesKey) { RenderDevices(); return; }
-        _devicesView.Update(ShownDevices, DevicesSettled, Soft.Enabled);
+        _devicesView.Update(ShownDevices, DevicesSettled, Animates);
     }
 
     // The devices the collapsed row shows (DeviceLists.Collapsed), with their colors.
@@ -123,7 +123,7 @@ public partial class MainWindow
         DevicesContent.Margin = new Thickness(_header.Side, 0, _header.Side, MonitorBottom(height));
         var key = DevicesKey();
         // The same step: the page stays, and only shows the devices as they are now (a device switched off in the settings).
-        if (_devicesView is not null && key == _devicesKey && DevicesContent.Children.Contains(_devicesView)) { _devicesView.Update(ShownDevices, DevicesSettled, Soft.Enabled); return; }
+        if (_devicesView is not null && key == _devicesKey && DevicesContent.Children.Contains(_devicesView)) { _devicesView.Update(ShownDevices, DevicesSettled, Animates); return; }
         var layout = CurrentDevicesLayout();
         _devicesKey = key; _devicesLayout = layout;
         var old = shown ? _devicesView : null;

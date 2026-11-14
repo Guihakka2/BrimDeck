@@ -178,7 +178,7 @@ public sealed partial class SettingsWindow
         void Slide(FrameworkElement part, double to, Action? done = null)
         {
             double from = Offset(part);
-            if (!S.Animations || !SystemParameters.ClientAreaAnimation || Math.Abs(from - to) < .1) { Place(part, to); done?.Invoke(); return; }
+            if (!Soft.Enabled || Math.Abs(from - to) < .1) { Place(part, to); done?.Invoke(); return; }
             var motion = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(Soft.Choose)) { EasingFunction = Soft.Out };
             if (done is not null) motion.Completed += (_, _) => done();
             moves[part].BeginAnimation(axis, motion);

@@ -223,7 +223,7 @@ public partial class MainWindow
         popup.Closing += (_, e) =>
         {
             closing = true; if (ReferenceEquals(_detailPopup, popup)) _detailPopup = null;
-            if (left || _popupAtOnce || _app.Exiting || popup.Content is not UIElement content || !Soft.Enabled) return;
+            if (left || _popupAtOnce || _app.Exiting || popup.Content is not UIElement content || !Animates) return;
             e.Cancel = true; left = true; popup.IsHitTestVisible = false;
             Soft.Leave(content, () => popup.Close());
             // The leave is the only thing that closes it now, and an animation replaced on the same property never completes,
@@ -243,7 +243,7 @@ public partial class MainWindow
         };
         // The pop-up enters once its first frame has been drawn: a layered window takes a frame or two to come up, and an
         // entrance started before Show lost its beginning to them and popped in. Until then its content is held out of sight.
-        if (Soft.Enabled && popup.Content is UIElement entering)
+        if (Animates && popup.Content is UIElement entering)
         {
             entering.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 0, TimeSpan.Zero));
             // Once only, and not when it was closed before its first frame: the entrance would replace the leave's fade, whose

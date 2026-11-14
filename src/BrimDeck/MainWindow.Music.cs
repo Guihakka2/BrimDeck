@@ -135,7 +135,7 @@ public partial class MainWindow
             _hover.Stop(); _leave.Stop(); _pageSwitchHold.Stop(); _pageSwitchHold.Start();
         }
         if (remember) { Settings.LastPage = page; _app.PanelSettingsEdited(this); }
-        bool animate = changed && _expanded && !_preview && Soft.Enabled;
+        bool animate = changed && _expanded && !_preview && Animates;
         var before = CurrentPage;
         var from = PageContent(before);
         var picture = animate ? PageHandover.Capture(from) : null;
@@ -421,7 +421,7 @@ public partial class MainWindow
     // The titles of a new song rise into place. A rebuild during the change continues it from where it is.
     private void RiseIn(FrameworkElement titles)
     {
-        if (!Soft.Enabled) return;
+        if (!Animates) return;
         double done = Math.Clamp((Environment.TickCount64 - _songArrived) / (double)Soft.Move, 0, 1), start = Curves.Follow(done);
         int left = (int)Math.Max(1, Soft.Move * (1 - done));
         var shift = new TranslateTransform();
@@ -463,7 +463,7 @@ public partial class MainWindow
         // Fitting the usage page for them is kept until its size, data or settings change (CachedUsageHeader): this runs on every
         // update of the song and many times a second during a drag.
         ApplyHeader(Settings.UsagePage ? PanelHeader.Music(c).WithControlsOf(CachedUsageHeader()) : PanelHeader.Music(c));
-        bool animate = Soft.Enabled;
+        bool animate = Animates;
         // Without the cover the lyrics, or a message, take a column of their own; with neither the titles have the width.
         bool lyricColumn = !Settings.MusicPageCover && (hasLyrics || message.Length > 0);
         string key = $"{track?.Id}|{track?.SongKey}|{logMode}|{appleEntry}|{kugouEntry}|{_media?.RestartingNetease}|{_media?.RestartingKugou}|{track?.State}|{track?.CanToggle}|{track?.CanPrevious}|{track?.CanNext}|{track?.CanSeek}|{track?.CanRepeat}|{track?.CanShuffle}|{track?.Shuffle}|{track?.Repeat}|{track?.CanLike}|{track?.Liked}|{track?.HasTimeline}|{timeline}|{playerLyrics}|{hasPlayerLyric}|{w}|{h}|{_lyrics.GetHashCode()}|{_mediaCover?.GetHashCode()}|{_media?.Error}|{_media?.KugouError}|{Settings.LyricsEnabled}|{Settings.MusicPageCover}|{Settings.EqualizerColor}|{Settings.EqualizerCustomColor}|{Settings.MusicLyricColor}|{Settings.MusicLyricCustomColor}|{Settings.MusicEqualizerBars}|{Settings.UiFont}|{Loc.Language}|{animate}";
@@ -473,7 +473,7 @@ public partial class MainWindow
         // Lyrics that arrive after the song, or come and go with the player's line, only fade in their own lines (lyricsArrive):
         // the form counts the lyric lines the room holds, not whether lyrics are there.
         string form = $"{track is null}|{layout.LyricRoom}|{layout.MergeTitle}|{layout.ShowFullControl}|{layout.ShowMessage}|{Settings.LyricsEnabled}|{Settings.MusicPageCover}|{lyricColumn}|{showSmtcHint}|{timeline}";
-        bool lyricsArrive = shown && hasLyrics && !_musicHadLyrics && Soft.Enabled;
+        bool lyricsArrive = shown && hasLyrics && !_musicHadLyrics && Animates;
         _musicHadLyrics = hasLyrics;
         // A new song changes the titles and perhaps the cover; the rest of the page is the same and stays still. The titles
         // rise into place (RiseIn) and a new cover fades in. A player announces a song in a few updates (title, artist, and a
@@ -1178,7 +1178,7 @@ public partial class MainWindow
         int title = shown.FindIndex(entry => entry.Part is CompactPart.Music);
         // One gap between every two parts; what is left widens them evenly and then centres the row.
         var place = CompactSpacing.Arrange([.. shown.Select(entry => entry.Size)], title, titleWanted, shortest, grid.Width, unit, scale, dpi, titleFirst);
-        bool animate = Soft.Enabled;
+        bool animate = Animates;
         for (int i = 0; i < shown.Count; i++)
         {
             double left = place.Left[i], room = place.Room[i];
@@ -1275,10 +1275,10 @@ public partial class MainWindow
         bool musicVisible = MusicPresentationVisible, systemVisible = SystemLevelsVisible;
         _app.PresentMedia(this, PlayerLevelsVisible, systemVisible);
         bool progressVisible = !_expanded && EffectiveStyle == CompactStyle.Line && Settings.MusicIndicatorProgress && _mediaTrack is { HasTimeline: true, State: not MediaState.Stopped };
-        bool animations = Soft.Enabled;
+        bool animations = Animates;
         // A paused song rests at the start of its line; an endless scroll would keep the window composing for hours. So does a
-        // display that is off: the line rests until it is back.
-        _compactMarquee?.SetScrolling(animations && MusicAudioActive && IsVisible && !IsSuppressed && !DisplayPower.Off && !_expanded && _alert is null && EffectiveStyle != CompactStyle.Line);
+        // display that is off: the line rests until it is back. A title that does not fit scrolls in high contrast too (TextScrolls).
+        _compactMarquee?.SetScrolling(TextScrolls && MusicAudioActive && IsVisible && !IsSuppressed && !DisplayPower.Off && !_expanded && _alert is null && EffectiveStyle != CompactStyle.Line);
         UpdateLyricScrolling();
         UpdateQuotaCarousel();
         bool needed = IsVisible && !IsSuppressed && !DisplayPower.Off && (MusicAudioActive && (musicVisible || progressVisible) || animations && systemVisible || _trackNoticeUntil > DateTimeOffset.UtcNow);
@@ -1295,10 +1295,10 @@ public partial class MainWindow
     }
     // The open page: the current lyric scrolls only while a song plays, the panel is open on this page and animation is on. The title
     // is the song's name, not its audio, so it scrolls whenever the page is open and the title does not fit; paused, it would otherwise
-    // rest cut at its start with no way to read the rest.
+    // rest cut at its start with no way to read the rest. Both scroll in high contrast too (TextScrolls).
     private void UpdateLyricScrolling()
     {
-        bool open = Soft.Enabled
+        bool open = TextScrolls
             && IsVisible && !IsSuppressed && !DisplayPower.Off && _expanded && IsMusicPage;
         _lyricCurrent?.SetScrolling(open && MusicAudioActive); _musicTitle?.SetScrolling(open);
     }
@@ -1331,7 +1331,7 @@ public partial class MainWindow
     private void TickMusic()
     {
         var now = DateTimeOffset.UtcNow; double seconds = Math.Min(.5, (now - _lastMusicTick).TotalSeconds); _lastMusicTick = now;
-        bool animations = Soft.Enabled;
+        bool animations = Animates;
         bool playerVisible = PlayerLevelsVisible, systemVisible = SystemLevelsVisible;
         bool playing = animations && MusicAudioActive, compactPlaying = playing || animations && systemVisible;
         _app.PresentMedia(this, playerVisible, systemVisible);

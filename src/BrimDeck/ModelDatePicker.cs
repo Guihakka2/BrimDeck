@@ -208,7 +208,7 @@ internal sealed class ModelDatePicker : Border
 
     // Its own pace, whatever the panel's animation length, as the panel's hover and press feedback (DatePickerTiming.Fixed).
     private static DatePickerTiming Timing => DatePickerTiming.Fixed;
-    private static bool Moves => Soft.Enabled;
+    private bool Moves => Soft.At(this);
     private static double Clock() => Eased.Now;
     private string Hex(string token) => _palette[token].ToString();
     private Brush Brush(string token) => UI.Brush(Hex(token));

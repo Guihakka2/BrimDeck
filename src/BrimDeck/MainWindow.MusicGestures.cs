@@ -200,7 +200,7 @@ public partial class MainWindow
         _dragging = false; _dragTrail = null; _dragLabel = null;
         _volumeDrag?.Device.Dispose(); _volumeDrag = null;
         if (GestureLayer.Children.Count == 0) return;
-        if (!Soft.Enabled) { GestureLayer.Children.Clear(); return; }
+        if (!Animates) { GestureLayer.Children.Clear(); return; }
         var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(180)) { EasingFunction = Soft.Out };
         fade.Completed += (_, _) => { if (!_dragging) { GestureLayer.Children.Clear(); GestureLayer.BeginAnimation(OpacityProperty, null); GestureLayer.Opacity = 1; } };
         GestureLayer.BeginAnimation(OpacityProperty, fade);

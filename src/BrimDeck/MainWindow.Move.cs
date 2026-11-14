@@ -228,7 +228,7 @@ public partial class MainWindow
         // A capsule dropped by the bottom or back at the top docks with another edge: the island comes in there once laid out
         // (FadeInOnNewEdge); otherwise it shows at once under the fading overlay.
         if (!_edgeArriving && !_edgeClearing) SetImmediate(HoverZone, OpacityProperty, 1d);
-        overlay.FadeOut();
+        overlay.FadeOut(Animates);
     }
 
     // The move shortcut (KeyboardMove): one step of the collapsed surface, saved like a drop. The open panel and a surface being
