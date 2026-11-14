@@ -62,9 +62,10 @@ public partial class MainWindow
         HoverZone.PreviewDragLeave += ShelfDragLeave;
         HoverZone.PreviewDrop += ShelfDrop;
         // A press anywhere else on the panel lets go of the search box: the keyboard goes back to the window it came from, and the
-        // search and its results stay.
+        // search and its results stay. A panel holding the keyboard for a hotkey keeps it (PanelKeyboard).
         PreviewMouseLeftButtonDown += (_, e) =>
         {
+            if (PanelKeys.Holding) return;
             if (_searchBox is not { IsKeyboardFocusWithin: true } box || box.Parent is not Visual host) return;
             if (e.OriginalSource is Visual pressed && (host == pressed || host.IsAncestorOf(pressed))) return;
             EndTyping(); Keyboard.ClearFocus();

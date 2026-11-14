@@ -1035,7 +1035,11 @@ public partial class MainWindow : Window
     }
     // While compact, TrackPointer alone decides; an extra enter or leave message would restart the open delay.
     private void Island_MouseEnter(object sender, MouseEventArgs e)
-    { if (_expanded) PointerChanged(true); }
+    { if (_expanded && !PressedByKeyboard) PointerChanged(true); }
+    // A button pressed with Space takes the mouse capture until the key is released, and WPF then counts the pointer as over
+    // the button and the panel around it wherever it is; that is no entry of the pointer.
+    private static bool PressedByKeyboard => Mouse.Captured is ButtonBase && Mouse.LeftButton == MouseButtonState.Released
+        && Mouse.RightButton == MouseButtonState.Released && Mouse.MiddleButton == MouseButtonState.Released;
     private void Island_MouseLeave(object sender, MouseEventArgs e)
     { if (_expanded) PointerChanged(false); }
     internal void TrackPointer()
@@ -1074,7 +1078,7 @@ public partial class MainWindow : Window
             // A jump straight out of the panel can leave without any mouse message reaching the window.
             // Inside means over the panel itself or the collapsed hover area (InsideOpenPanel); HoverZone's bounds would also
             // count its top margin above a lowered panel.
-            bool inside = (Island.IsMouseOver || InsideOpenPanel(cursor)) && !Covered();
+            bool inside = (Island.IsMouseOver && !PressedByKeyboard || InsideOpenPanel(cursor)) && !Covered();
             // The expand hotkey's pin holds the panel open until the pointer is inside once. If that first entry is seen here
             // rather than by Island_MouseEnter (for example in the hover area beside the panel), record it, so leaving later closes
             // the panel as usual. An entry by MouseEnter already went through PointerChanged, which released the pin.

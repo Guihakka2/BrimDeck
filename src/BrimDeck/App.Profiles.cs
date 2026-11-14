@@ -212,6 +212,8 @@ public partial class App
     private (string Name, string Path) ForegroundApp()
     {
         var window = GetForegroundWindow();
+        // A panel that took the keyboard for a hotkey is in front (PanelKeyboard): the app the user was in is still the one in front.
+        if (window != IntPtr.Zero && window == WindowsHost.KeyboardPanel) return _foreground;
         if (window == IntPtr.Zero) return ("", "");
         GetWindowThreadProcessId(window, out var pid);
         if (pid == 0 || pid == Environment.ProcessId) return ("", "");

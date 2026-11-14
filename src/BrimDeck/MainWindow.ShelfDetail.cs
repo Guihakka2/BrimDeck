@@ -164,6 +164,14 @@ public partial class MainWindow
     private void TakeKeyboardOnClick(TextBox box) => box.PreviewMouseLeftButtonDown += (_, _) => { if (!IsActive || !box.IsKeyboardFocusWithin) BeginTyping(box); };
     private void EndTyping()
     {
+        // A panel holding the keyboard for a hotkey keeps it until it closes (PanelKeyboard): the focus goes back to the search
+        // button, or to the page's button, instead of the keyboard going back to the window it came from.
+        if (PanelKeys.Holding)
+        {
+            Dispatcher.BeginInvoke(() => { if (PanelKeys.Holding && _expanded) Keyboard.Focus(ShelfSearchButton.IsVisible ? ShelfSearchButton : PageButton(CurrentPage)); },
+                System.Windows.Threading.DispatcherPriority.Input);
+            return;
+        }
         if (IsActive && PasteInput.IsOther(_app.Shelf.TypingTarget)) PasteInput.Activate(_app.Shelf.TypingTarget);
     }
     private void RefocusTyping()
