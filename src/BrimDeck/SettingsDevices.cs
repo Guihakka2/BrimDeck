@@ -146,7 +146,7 @@ public partial class SettingsWindow
     {
         var all = _app.Devices?.All ?? [];
         var listed = DeviceLists.Remember(all, S.DeviceChoices);
-        string key = string.Join("|", listed.Select(choice => $"{choice.Key}={choice.Name}={choice.Label}={choice.Collapsed}={choice.Expanded}={choice.Color}={choice.ChargeColor}={choice.WarningColor}={choice.CriticalColor}={choice.Read}={all.Any(device => device.Key == choice.Key)}"))
+        string key = string.Join("|", listed.Select(choice => $"{choice.Key}={choice.Name}={choice.Label}={choice.Collapsed}={choice.Expanded}={choice.Color}={choice.ChargeColor}={choice.WarningColor}={choice.CriticalColor}={ReadState(all.FirstOrDefault(device => device.Key == choice.Key), choice)}={all.Any(device => device.Key == choice.Key)}"))
             + "#" + (_app.Devices?.Settled == true);
         if (key == _deviceRowsKey && rows.Children.Count > 0)
         {
@@ -255,14 +255,23 @@ public partial class SettingsWindow
         var collapsed = Switch(choice.Collapsed, Loc.T("收起时显示", "Show when collapsed"), (c, on) => c.Collapsed = on, 8);
         collapsed.Opacity = S.NotchDevices || S.CapsuleDevices ? 1 : .4;
         Switch(choice.Expanded, Loc.T("在展开页显示", "Show on the page"), (c, on) => c.Expanded = on, 9);
-        // Only the readers that send requests (DeviceReadSwitches); a device stopped for misbehaving shows off, and turned on is
-        // tried afresh (DeviceReadBook.Resume).
+        // Only the readers that send requests or listen (DeviceReadSwitches). The switch is the hardware's: every remembered key
+        // of it takes it. A device stopped for misbehaving shows off, and turned on is tried afresh (DeviceReadBook.Resume).
         if (ReadSwitchable(device, choice) is { } hardware)
-            Switch(choice.Read && !DeviceReadStore.Book.Stopped(hardware), Loc.T("读取电量", "Read battery"), (c, on) =>
+        {
+            var reading = new CheckBox { Style = (Style)FindResource("SettingsToggle"), Padding = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center, IsChecked = ReadState(device, choice) == true };
+            AutomationProperties.SetName(reading, Loc.T("读取电量", "Read battery") + " " + name);
+            void SetReading(bool on) => EditDevices(choices =>
             {
-                c.Read = on; c.Hardware ??= hardware;
+                DeviceLists.Find(choices, choice.Key)!.Hardware ??= hardware;
+                DeviceLists.SetRead(choices, hardware, on);
                 if (on) DeviceReadStore.Book.Resume(hardware);
-            }, 10);
+            });
+            reading.Checked += (_, _) => SetReading(true);
+            reading.Unchecked += (_, _) => SetReading(false);
+            Grid.SetColumn(reading, 10); row.Children.Add(reading);
+        }
 
         if (device is not null) _deviceDetails[choice.Key] = (detail, ring);
         AttachDrag(handle, name, () => rows, DeviceRowHeight, list =>
@@ -283,14 +292,15 @@ public partial class SettingsWindow
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, RefreshDeviceRows);
     }
 
-    // The hardware whose reading the user can turn off: a device read through its USB collections.
+    // The hardware whose reading the user can turn off: a device read through its USB collections (a choice keeps hardware
+    // only for those, DeviceLists.Remember).
     private static string? ReadSwitchable(DeviceBattery? device, DeviceChoice choice)
-    {
-        var hardware = device?.Hardware ?? choice.Hardware;
-        if (hardware is null) return null;
-        if (device is not null && device.Source is not (DeviceSource.Hid or DeviceSource.Logitech or DeviceSource.Razer or DeviceSource.SteelSeries or DeviceSource.HyperX or DeviceSource.Sony)) return null;
-        return hardware;
-    }
+        => device is null ? choice.Hardware : DeviceLists.ReadSwitchable(device.Source) ? device.Hardware ?? choice.Hardware : null;
+    // Whether the device is read: not turned off for its hardware by any of its keys, and not stopped for misbehaving; null
+    // where it has no switch.
+    private bool? ReadState(DeviceBattery? device, DeviceChoice choice)
+        => ReadSwitchable(device, choice) is { } hardware
+            ? !DeviceLists.ReadOff(S.DeviceChoices).Contains(hardware, StringComparer.OrdinalIgnoreCase) && !DeviceReadStore.Book.Stopped(hardware) : null;
 
     private static string DeviceDetail(DeviceBattery device) => string.Join(" · ", new[] { Devices.KindName(device.Kind), Devices.SourceName(device.Source),
         device.Parts.Count > 0 ? string.Join("  ", device.Parts.Select(part => Devices.PartName(part.Part) + " " + Devices.Figure(part.Percent)))

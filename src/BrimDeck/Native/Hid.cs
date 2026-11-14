@@ -24,12 +24,18 @@ internal sealed class HidInfo
     public List<(byte ReportId, ushort Page, ushort Usage, ushort Link, int Min, int Max)> FeatureBatteries = [];
     // The ids of the output and feature reports the collection declares (0 where it numbers none).
     public HashSet<byte> OutputIds = [], FeatureIds = [];
-    // MI_xx in the path: the USB interface; -1 when the path has none.
-    public int Interface => System.Text.RegularExpressions.Regex.Match(Path, "mi_([0-9a-f]{2})", System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } m
-        ? Convert.ToInt32(m.Groups[1].Value, 16) : -1;
+    // MI_xx in the path: the USB interface; -1 when the path has none. Worked out once: the readers ask for it every pass.
+    public int Interface => _interface ??= Hid.Number(Hid.InterfaceIn, Path);
     // COLxx in the path: the top-level collection where the interface has several; -1 when the path has none.
-    public int Collection => System.Text.RegularExpressions.Regex.Match(Path, "&col([0-9a-f]{2})", System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } m
-        ? Convert.ToInt32(m.Groups[1].Value, 16) : -1;
+    public int Collection => _collection ??= Hid.Number(Hid.CollectionIn, Path);
+    // The device the collection belongs to, the same for all its collections (Hid.Group).
+    public string Group => _group ??= Hid.Group(Path);
+    private int? _interface, _collection;
+    private string? _group;
+    // Which reader takes the collection, worked out once by the battery worker from the attributes above (HidBatteries.Sort).
+    internal bool Sorted;
+    internal Func<HidInfo, HashSet<string>, IEnumerable<BrimDeck.Core.DeviceBattery>>? Dongle;
+    internal (BrimDeck.Core.BrandFamily Family, IReadOnlyList<BrimDeck.Core.BrandWay> Ways)? Brand;
     // Reached through Bluetooth (classic or LE) rather than USB.
     public bool Bluetooth => Hid.IsBluetooth(Path);
 }
@@ -72,6 +78,15 @@ internal static class Hid
         var match = System.Text.RegularExpressions.Regex.Match(path, @"vid[_&][0-9a-f]*?([0-9a-f]{4})[_&]pid[_&]([0-9a-f]{4})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         return match.Success ? (Convert.ToInt32(match.Groups[1].Value, 16), Convert.ToInt32(match.Groups[2].Value, 16)) : (0, 0);
     }
+
+    private const System.Text.RegularExpressions.RegexOptions Options = System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled;
+    internal static readonly System.Text.RegularExpressions.Regex InterfaceIn = new("mi_([0-9a-f]{2})", Options), CollectionIn = new("&col([0-9a-f]{2})", Options);
+    private static readonly System.Text.RegularExpressions.Regex ColIn = new("&col[0-9a-f]+", Options), MiIn = new("&mi_[0-9a-f]+", Options), TailIn = new(@"&[0-9a-f]{4}#\{", Options);
+    internal static int Number(System.Text.RegularExpressions.Regex pattern, string path)
+        => pattern.Match(path) is { Success: true } m ? Convert.ToInt32(m.Groups[1].Value, 16) : -1;
+    // A path without its collection and interface (and the number some drivers put before the class), so every collection of
+    // one device has the same.
+    internal static string Group(string path) => TailIn.Replace(MiIn.Replace(ColIn.Replace(path.ToLowerInvariant(), ""), ""), "#{");
 
     // Whether a path is a collection reached through Bluetooth (classic or LE) rather than USB.
     public static bool IsBluetooth(string path) => path.Contains("{00001124-", StringComparison.OrdinalIgnoreCase) || path.Contains("{00001812-", StringComparison.OrdinalIgnoreCase)
