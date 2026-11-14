@@ -57,6 +57,29 @@ static class ClaudeUpgradeCacheTests
         var saved = ClaudeQuotaCache.Serialize(new(Start, "Pro", "", "", [new Quota("每周额度", 5, null, 10080)]), "account-a", ClaudeSignIn.Code, ClaudePlanOrigin.Account, "org-personal");
         check("Claude upgrade cache: a reading kept under its organization is found by it, and not by another",
             ClaudeQuotaCache.Parse(saved, Start.AddMinutes(5), "account-a", "org-personal") is { Plan: "Pro" } && ClaudeQuotaCache.Parse(saved, Start.AddMinutes(5), "account-a", "org-team", earlierReading: true) is null);
+
+        // The primary organization is rate limited (its reading not yet moved to its own name) while another organization is saved or
+        // rejected: the earlier version's reading stays for the primary one, also after a restart (a new read of the file).
+        var path = Path.Combine(Path.GetTempPath(), "brimdeck-upgrade-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            File.WriteAllText(path, earlier);
+            var team = new ClaudeQuotaSnapshot(Start.AddMinutes(1), "Team", "", "", [new Quota("每周额度", 9, null, 10080)]);
+            ClaudeQuotaCache.Save(path, team, "account-a", ClaudeSignIn.Code, ClaudePlanOrigin.Account, "org-team", primary: false);
+            check("Claude upgrade cache: another organization's save leaves the earlier reading for the primary one",
+                ClaudeQuotaCache.Load(path, Start.AddMinutes(5), "account-a", "org-personal", earlierReading: true) is { Plan: "Max 5x" });
+            ClaudeQuotaCache.Delete(path, "org-team", primary: false);
+            check("Claude upgrade cache: another organization rejected leaves it too, and its own reading goes",
+                ClaudeQuotaCache.Load(path, Start.AddMinutes(5), "account-a", "org-personal", earlierReading: true) is { Plan: "Max 5x" }
+                && ClaudeQuotaCache.Load(path, Start.AddMinutes(5), "account-a", "org-team") is null);
+            var personal = new ClaudeQuotaSnapshot(Start.AddMinutes(2), "Max 5x", "", "", [new Quota("每周额度", 50, null, 10080)]);
+            ClaudeQuotaCache.Save(path, personal, "account-a", ClaudeSignIn.Code, ClaudePlanOrigin.Account, "org-personal", primary: true);
+            check("Claude upgrade cache: the primary organization's own save replaces the earlier reading",
+                !File.ReadAllText(path).Contains("\"Organization\":null", StringComparison.Ordinal)
+                && ClaudeQuotaCache.Load(path, Start.AddMinutes(5), "account-a", "org-personal") is { Quotas.Count: 1 }
+                && ClaudeQuotaCache.Load(path, Start.AddMinutes(5), "account-a", "org-team", earlierReading: true) is null);
+        }
+        finally { try { File.Delete(path); } catch (IOException) { } }
     }
 
 
