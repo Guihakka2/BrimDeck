@@ -744,18 +744,85 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return [Mouse("inphic", info, "Inphic", battery)];
     }
 
+    // MCHOSE on its own vendor id 0x3837: the reads Dongles.MchoseReads gives the collection (by its shape and the report
+    // ids it declares), in that order. The read that answers is kept for the device (its receiver or cable, GroupKey) and is
+    // from then on the only one sent, to that one collection. A collection where none answered is tried twice more, 5 and 30
+    // minutes later (a mouse asleep when it was first seen), and then not again while the app runs. A device that says it is
+    // asleep has answered. A read the collection refuses is passed over at once.
+    private static readonly Lock MchoseLock = new();
+    private static readonly Dictionary<string, (string Path, Dongles.MchoseRead Read)> MchoseKnown = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, (int Rounds, long Next)> MchoseSilent = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly long[] MchoseRetryMs = [5 * 60_000, 30 * 60_000];
+
     private static IEnumerable<DeviceBattery> Mchose(HidInfo info, HashSet<string> claimed)
     {
-        using var device = new HidDevice(info);
-        for (int attempt = 0; attempt < 3; attempt++)
+        string group = GroupKey(info.Path);
+        IReadOnlyList<Dongles.MchoseRead> reads;
+        lock (MchoseLock)
         {
-            if (attempt > 0) Thread.Sleep(30);
-            var read = Hid.Transact<object>([device], () => device.Write(Dongles.MchoseRequest()), r => Dongles.MchoseBattery(r) is { } b ? b : null, 400);
-            if (read is not BatteryRead battery) continue;
-            claimed.Add(info.Path);
-            return [Mouse("mchose", info, "MCHOSE", battery)];
+            if (MchoseKnown.TryGetValue(group, out var known))
+            {
+                if (!string.Equals(known.Path, info.Path, StringComparison.OrdinalIgnoreCase)) return [];
+                reads = [known.Read];
+            }
+            else if (MchoseSilent.TryGetValue(info.Path, out var silent) && Environment.TickCount64 < silent.Next) return [];
+            else reads = Dongles.MchoseReads(info.Product, info.ProductName, info.UsagePage, info.Usage, info.FeatureLength, info.OutputLength,
+                info.OutputIds, info.FeatureIds);
         }
+        foreach (var read in reads)
+        {
+            (BatteryRead Read, string? Model)? answer;
+            try { answer = MchoseAsk(info, read); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException) { answer = null; }
+            if (answer is not { } found) continue;
+            lock (MchoseLock) { MchoseKnown[group] = (info.Path, read); MchoseSilent.Remove(info.Path); }
+            claimed.Add(info.Path);
+            var kind = Dongles.MchoseKind(info.Product, info.ProductName) is { } named and not DeviceKind.Other ? named
+                : read == Dongles.MchoseRead.Audio ? DeviceKind.Headphones : DeviceKind.Mouse;
+            // Headsets keep the key the X9 has always had.
+            string prefix = kind is DeviceKind.Headphones or DeviceKind.Earbuds ? "headset" : "mchose";
+            return [Mouse(prefix, info, "MCHOSE", found.Read, kind, found.Model)];
+        }
+        lock (MchoseLock)
+            if (!MchoseKnown.ContainsKey(group) && reads.Count > 0)
+            {
+                int rounds = (MchoseSilent.TryGetValue(info.Path, out var silent) ? silent.Rounds : 0) + 1;
+                MchoseSilent[info.Path] = (rounds, rounds <= MchoseRetryMs.Length ? Environment.TickCount64 + MchoseRetryMs[rounds - 1] : long.MaxValue);
+            }
         return [];
+    }
+
+    // One of MCHOSE's reads on one collection; null when it was not answered.
+    private static (BatteryRead Read, string? Model)? MchoseAsk(HidInfo info, Dongles.MchoseRead read)
+    {
+        switch (read)
+        {
+            case Dongles.MchoseRead.Realtek:
+                return RealtekAsk(info) is { } realtek ? (realtek.Read, Dongles.MchoseRealtekModel(realtek.Model)) : null;
+            case Dongles.MchoseRead.Gmouse:
+            {
+                using var device = new HidDevice(info) { StripZero = true };
+                return Hid.Transact<object>([device], () => device.Write(Dongles.GmouseRequest()), r => Dongles.GmouseBattery(r) is { } b ? b : null, 800) is BatteryRead battery
+                    ? (battery, null) : null;
+            }
+            default:
+            {
+                // Status and Audio: twice, 400 ms each (HaloBattery's budget); the 0x4D frame three times, 30 ms apart.
+                var (request, parse, attempts) = read switch
+                {
+                    Dongles.MchoseRead.Status => (Dongles.MchoseStatusRequest(), (Func<byte[], BatteryRead?>)Dongles.MchoseStatus, 2),
+                    Dongles.MchoseRead.Audio => (Dongles.MchoseAudioRequest(), Dongles.MchoseAudio, 2),
+                    _ => (Dongles.MchoseRequest(), Dongles.MchoseBattery, 3)
+                };
+                using var device = new HidDevice(info);
+                for (int attempt = 0; attempt < attempts; attempt++)
+                {
+                    if (attempt > 0) Thread.Sleep(30);
+                    if (Hid.Transact<object>([device], () => device.Write(request), r => parse(r) is { } b ? b : null, 400) is BatteryRead battery) return (battery, null);
+                }
+                return null;
+            }
+        }
     }
 
     // AJAZZ AJ179: WriteFile interrupt OUT (report-id 0 + 32-byte 0x10), read until an info or online status frame.
@@ -813,8 +880,16 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private static IEnumerable<DeviceBattery> Lingbao(HidInfo info, HashSet<string> claimed)
         => Feature(info, claimed, "lingbao", "LINGBAO M5PRO Max", Dongles.LingbaoRequest(), 50, Dongles.LingbaoBattery);
 
-    // MCHOSE on its RealTek receivers: the short report first, then the long one, each asked afresh before every read.
+    // MCHOSE's 7 series on 0x5253 (the RealTek exchange alone; MCHOSE's other reads are for 0x3837).
     private static IEnumerable<DeviceBattery> MchoseRealtek(HidInfo info, HashSet<string> claimed)
+    {
+        if (RealtekAsk(info) is not { } answer) return [];
+        claimed.Add(info.Path);
+        return [Mouse("mchose", info, "MCHOSE", answer.Read, preferredName: Dongles.MchoseRealtekModel(answer.Model))];
+    }
+
+    // The RealTek exchange: the short report first, then the long one, each asked afresh before every read.
+    private static (BatteryRead Read, int Model)? RealtekAsk(HidInfo info)
     {
         using var device = new HidDevice(info);
         foreach (bool longReport in new[] { false, true })
@@ -824,12 +899,10 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             {
                 if (!device.SetFeature(request)) break;
                 Thread.Sleep(120);
-                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is not { } reply || Dongles.MchoseRealtekBattery(reply) is not { } answer) continue;
-                claimed.Add(info.Path);
-                return [Mouse("mchose", info, "MCHOSE", answer.Read, preferredName: Dongles.MchoseRealtekModel(answer.Model))];
+                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is { } reply && Dongles.MchoseRealtekBattery(reply) is { } answer) return answer;
             }
         }
-        return [];
+        return null;
     }
 
     // The MCHOSE keyboards on 41E4:2001 (Dongles.MchoseKeyboardRequest): the command written, the answer read off the input

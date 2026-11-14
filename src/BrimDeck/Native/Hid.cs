@@ -22,6 +22,8 @@ internal sealed class HidInfo
     // The battery usages the collection's feature reports carry (HidBattery.IsBattery): report id, page, usage, link collection
     // and logical range.
     public List<(byte ReportId, ushort Page, ushort Usage, ushort Link, int Min, int Max)> FeatureBatteries = [];
+    // The ids of the output and feature reports the collection declares (0 where it numbers none).
+    public HashSet<byte> OutputIds = [], FeatureIds = [];
     // MI_xx in the path: the USB interface; -1 when the path has none.
     public int Interface => System.Text.RegularExpressions.Regex.Match(Path, "mi_([0-9a-f]{2})", System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } m
         ? Convert.ToInt32(m.Groups[1].Value, 16) : -1;
@@ -95,6 +97,8 @@ internal static class Hid
                     HidP_GetCaps(preparsed, caps);
                     info.Usage = caps[0]; info.UsagePage = caps[1]; info.InputLength = caps[2]; info.OutputLength = caps[3]; info.FeatureLength = caps[4];
                     if (batteries && caps[30] > 0) info.FeatureBatteries = Batteries(preparsed, caps[30]);
+                    info.OutputIds = ReportIds(preparsed, 1, caps[26], caps[27]);
+                    info.FeatureIds = ReportIds(preparsed, 2, caps[29], caps[30]);
                 }
                 finally { HidD_FreePreparsedData(preparsed); }
             }
@@ -121,6 +125,26 @@ internal static class Hid
             found.Add((buffer[at + 2], page, usage, BitConverter.ToUInt16(buffer, at + 6), BitConverter.ToInt32(buffer, at + 40), BitConverter.ToInt32(buffer, at + 44)));
         }
         return found;
+    }
+
+    // The report ids of one report type (1 output, 2 feature), from its button and value capabilities. HIDP_BUTTON_CAPS and
+    // HIDP_VALUE_CAPS are both 72 bytes with the report id at 2.
+    private static HashSet<byte> ReportIds(IntPtr preparsed, int type, int buttons, int values)
+    {
+        var ids = new HashSet<byte>();
+        foreach (var (count, read) in new (int, Func<byte[], ushort, (int, ushort)>)[]
+        {
+            (buttons, (buffer, length) => (HidP_GetButtonCaps(type, buffer, ref length, preparsed), length)),
+            (values, (buffer, length) => (HidP_GetValueCaps(type, buffer, ref length, preparsed), length)),
+        })
+        {
+            if (count <= 0) continue;
+            var buffer = new byte[72 * count];
+            var (status, length) = read(buffer, (ushort)count);
+            if (status != HIDP_STATUS_SUCCESS) continue;
+            for (int i = 0; i < length; i++) ids.Add(buffer[i * 72 + 2]);
+        }
+        return ids;
     }
 
     // A battery usage's value from a feature report read on the collection.
@@ -189,6 +213,7 @@ internal static class Hid
     [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)] internal static extern bool HidD_FreePreparsedData(IntPtr data);
     [DllImport("hid.dll")] private static extern int HidP_GetCaps(IntPtr data, [Out] ushort[] caps);
     [DllImport("hid.dll")] private static extern int HidP_GetValueCaps(int reportType, [Out] byte[] caps, ref ushort length, IntPtr data);
+    [DllImport("hid.dll")] private static extern int HidP_GetButtonCaps(int reportType, [Out] byte[] caps, ref ushort length, IntPtr data);
     [DllImport("hid.dll")] private static extern int HidP_GetUsageValue(int reportType, ushort page, ushort link, ushort usage, out uint value, IntPtr data, byte[] report, uint length);
     [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)] internal static extern bool HidD_FlushQueue(IntPtr handle);
     [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)] private static extern bool HidD_GetProductString(IntPtr handle, byte[] buffer, int length);

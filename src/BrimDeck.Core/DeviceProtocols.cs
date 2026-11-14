@@ -18,7 +18,7 @@ namespace BrimDeck.Core;
 //   (HeadsetControl, the Linux drivers and the vendors' own web drivers are look-only).
 // - After HaloBattery (https://github.com/HeyOkay/HaloBattery, MIT; see ThirdPartyNotices.txt): the Compx 17-byte frame's
 //   reply rules (pulsar.py), the 0x83 feature exchange of WLmouse, G-Wolves, LAMZU and the MCHOSE A5 Pro Max with its model
-//   lists, the MCHOSE RealTek and G7 exchanges (mchose.py), the HyperX Cloud III, III S and Alpha 2 requests, the NZXT Lift
+//   lists, the MCHOSE RealTek and G7 exchanges and the 0x55 reads of its headsets and newer devices (mchose.py), the HyperX Cloud III, III S and Alpha 2 requests, the NZXT Lift
 //   Elite's telemetry, SteelSeries's mouse replies (steelseries.py), the Razer keyboards' transaction ids and interfaces, the
 //   Corsair receivers' get-property exchange (corsair.py) and the JBL Quantum 910's reports (jbl.py).
 // - After vigil-watt (https://github.com/evren-oct/vigil-watt, MIT): the ATK, HECATE and VGN collections for the Compx frame,
@@ -469,7 +469,7 @@ public static class Dongles
         return null;
     }
 
-    // ----- MCHOSE on its RealTek receivers (5253) and the Gmouse query -----
+    // ----- MCHOSE: the 7 series' RealTek exchange, the reads on report 0x55, and the Gmouse query -----
 
     // MCHOSE's 7 series (L7, M7, A7, K7) on vendor 0x5253 (the M7 Ultra's and L7 Pro's receiver 5253:1020, the A7's
     // 5253:1021, the M7 Ultra on its cable 5253:0031) and on MCHOSE's newer 0x3837 (the A7 V2 Ultra's 3837:100B), usage page
@@ -477,19 +477,10 @@ public static class Dongles
     // got back, asked afresh each time (one ask read twice only returns the request). The reply echoes 0xF9 (0x06 inverted) at
     // 1 and inverts its payload from 2: vendor id and model little endian, firmware (4 bytes), flags, level, charging. From
     // HaloBattery's mchose.py (measured on an M7 Ultra), after alexfrih/mchose-linux's PROTOCOL.md (the vendor driver's
-    // protocol for the 7 series). The driver, and both of them, take any device of the two vendors with that collection rather
-    // than a list of products, so the models whose receiver id nobody has published (the K7 Ultra's) are read too; the products
-    // known to speak another protocol are left out (MchoseRealtekOther). The A7's receiver id is from
-    // marsuyone/mchose-battery-tray's notes (facts only), whose sample reply carries model 0x0070 (the A7 in the driver's
-    // table) and its level where the M7 Ultra's is.
+    // protocol for the 7 series). The A7's receiver id is from marsuyone/mchose-battery-tray's notes (facts only), whose
+    // sample reply carries model 0x0070 (the A7 in the driver's table) and its level where the M7 Ultra's is. On 0x5253 this
+    // is the one read sent, to any receiver with that collection, as the driver does.
     public const int MchoseRealtek = 0x5253;
-    // On 0x3837: the G3 V2 (Gmouse), the MagDock, the X9 headset, the V9 headset and its dongle, and the G98 V3 keyboard,
-    // which does not answer this query (HaloBattery #362). Nor any 0x3837 device whose name says it is a keyboard, a headset
-    // or a speaker: the 7 series are mice.
-    public static readonly int[] MchoseRealtekOther = [0x4245, 0x1012, 0x6045, 0x600A, 0x6008, 0x1015];
-    public static bool IsMchoseRealtek(int vendor, int product, string name)
-        => vendor == MchoseRealtek || vendor == MchoseVendor && !MchoseRealtekOther.Contains(product)
-            && Devices.Named(name) is not (DeviceKind.Keyboard or DeviceKind.Headphones or DeviceKind.Earbuds or DeviceKind.Speaker);
     public static byte[] MchoseRealtekRequest(bool longReport)
     {
         var frame = new byte[longReport ? 65 : 21];
@@ -503,7 +494,7 @@ public static class Dongles
         if (reply.Length < 13 || reply[0] is not (0x11 or 0x12) || reply[1] != (0x06 ^ 0xFF)) return null;
         int Byte(int at) => reply[2 + at] ^ 0xFF;
         int vendor = Byte(0) | Byte(1) << 8;
-        if (vendor is not (MchoseRealtek or MchoseVendor) || Byte(9) > 100) return null;
+        if (vendor is not (MchoseRealtek or MchoseVendor or MchoseKeyboardVendor) || Byte(9) > 100) return null;
         return (new(Byte(9), Byte(10) != 0), Byte(2) | Byte(3) << 8);
     }
     // The model in the reply, by the vendor driver's own table as mchose-linux lists it (names only).
@@ -514,6 +505,86 @@ public static class Dongles
         _ => null
     };
 
+    // MCHOSE's own vendor id 0x3837 carries several chips, each with its own read: the 7 series' RealTek exchange above, the
+    // status read on output report 0x55 that M HUB (MCHOSE's driver) uses for its newer devices, M HUB's framed read for its
+    // headsets on the same report, the 0x4D frame of the web driver's mice, and the Gmouse query. Which one a model speaks is
+    // not something a receiver can be asked, so it is not looked up by model: each read goes only to the collection shape its
+    // source documents and only where the collection declares the read's report id, the kind (MchoseKind) decides the
+    // order (the reads measured on hardware first), and a reply counts only when it has that read's exact shape. The read
+    // that answers is kept for the device (HidBatteries), and the others are no longer sent to it. 0x3837 is
+    // MCHOSE's alone, so every firmware behind it is MCHOSE's; the chip makers' and shared ids keep their lists (Gmouse's
+    // 0xA8A5, the A5 Pro Max's 0x2023, the 41E4 keyboards), and 0x5253 gets the RealTek exchange only.
+    public enum MchoseRead { Realtek, Status, Audio, Frame4D, Gmouse }
+    // The kind by the name, else for the products whose name does not say it: the V9 Turbo's dongle and headset and the X9
+    // headset, and the G98 V3 keyboard (which does not answer the RealTek exchange, HaloBattery #362). The MagDock (1012) is
+    // sent nothing.
+    public static DeviceKind? MchoseKind(int product, string name) => product switch
+    {
+        0x1012 => DeviceKind.Other,
+        _ when Devices.Named(name) is { } named => named,
+        0x6008 or 0x600A or 0x6045 => DeviceKind.Headphones,
+        0x1015 => DeviceKind.Keyboard,
+        _ => null
+    };
+    // outputIds, featureIds: the report ids the collection declares; null where they are not known (Find, which only decides
+    // whether the collection is MCHOSE's to read), and then the shape alone decides.
+    public static IReadOnlyList<MchoseRead> MchoseReads(int product, string name, int usagePage, int usage, int featureLength, int outputLength,
+        IReadOnlySet<byte>? outputIds = null, IReadOnlySet<byte>? featureIds = null)
+    {
+        MchoseRead[] order = MchoseKind(product, name) switch
+        {
+            DeviceKind.Mouse => [MchoseRead.Realtek, MchoseRead.Frame4D, MchoseRead.Gmouse, MchoseRead.Status],
+            DeviceKind.Keyboard => [MchoseRead.Status],
+            DeviceKind.Headphones or DeviceKind.Earbuds or DeviceKind.Speaker => [MchoseRead.Audio, MchoseRead.Status],
+            null => [MchoseRead.Realtek, MchoseRead.Frame4D, MchoseRead.Gmouse, MchoseRead.Audio, MchoseRead.Status],
+            _ => []
+        };
+        bool Output(byte id) => outputIds is null || outputIds.Contains(id);
+        return [.. order.Where(read => read switch
+        {
+            MchoseRead.Realtek => usagePage == 0xFF01 && featureLength >= 21 && (featureIds is null || featureIds.Contains(0x11) || featureIds.Contains(0x12)),
+            MchoseRead.Status or MchoseRead.Audio => usagePage >= 0xFF00 && outputLength >= 64 && Output(0x55),
+            MchoseRead.Frame4D => usagePage is 0xFF01 or 0xFF0B && usage != 0x0010 && Output(0x4D),
+            MchoseRead.Gmouse => usagePage == 0xFF01 && usage == 0x0010 && outputLength >= 65 && Output(0x00),
+            _ => false
+        })];
+    }
+
+    // The status read on report 0x55: 55 65 01, zeros to 64 bytes, answered by 55 65 <level> <state>, the state 2 on battery,
+    // 3 charging, 4 full, 26 asleep; anything else is no answer. M HUB's charge-status listener reads it so (HaloBattery #189,
+    // from M HUB's driver), and JoaoKSS/MCHOSE_v9_PRO_Controller asks a V9 headset the same way. On the V9 Turbo+ it gave the
+    // level M HUB shows (HaloBattery #193); on its cable that headset answers nothing, so it shows no charging.
+    public static byte[] MchoseStatusRequest() { var frame = new byte[64]; frame[0] = 0x55; frame[1] = 0x65; frame[2] = 0x01; return frame; }
+    public static BatteryRead? MchoseStatus(byte[] r) => r.Length < 4 || r[0] != 0x55 || r[1] != 0x65 ? null : r[3] switch
+    {
+        26 => new(null, Asleep: true),
+        2 or 3 or 4 when r[2] <= 100 => new(r[2], r[3] == 3),
+        _ => null
+    };
+
+    // M HUB's framed read for its headsets on report 0x55: AA, version 1, flags (1: checksummed), length (payload + 1), the
+    // command type (00 01) and command 0x0B, then the payload and the checksum (flags, length, type, command and payload
+    // XORed; 0 when the flags say none). The answer's payload is the sleep state (0 asleep), then the percent with bit 7 set
+    // while charging. From HaloBattery's mchose.py (M HUB's senders and parser); tried before the status read, as M HUB does.
+    public static byte[] MchoseAudioRequest()
+    {
+        var frame = new byte[64];
+        new byte[] { 0x55, 0xAA, 0x01, 0x00, 0x01, 0x00, 0x01, 0x0B, 0x00 }.CopyTo(frame, 0);
+        return frame;
+    }
+    public static BatteryRead? MchoseAudio(byte[] r)
+    {
+        if (r.Length < 11 || r[0] != 0x55 || r[1] != 0xAA || r[5] != 0x00 || r[6] != 0x01 || r[7] != 0x0B) return null;
+        int flags = r[3], length = r[4];
+        if (length < 3 || r.Length < 8 + length) return null;
+        int check = flags ^ length ^ r[5] ^ r[6] ^ r[7];
+        for (int i = 8; i < 8 + length - 1; i++) check ^= r[i];
+        if (r[8 + length - 1] != (flags == 1 ? check : 0)) return null;
+        if (r[8] == 0) return new(null, Asleep: true);
+        int level = r[9] & 0x7F;
+        return level <= 100 ? new(level, (r[9] & 0x80) != 0) : null;
+    }
+
     // MCHOSE keyboards on the 2.4 GHz receiver 41E4:2001 (a G87 in marsuyone/mchose-battery-tray's notes, a K87 in
     // HaloBattery's mchose_kb.py; each measured its own), usage page 0xFF02: the output report 13 4A 01 00 (20 bytes, zeros
     // after: getBattery's wireless command in the vendor's web driver), answered by an input report 13 4A 01 00 02 with the
@@ -522,14 +593,18 @@ public static class Dongles
     // is no charging state and is not read. The receiver's feature report 0x06 on 0xFF04 is not read either. Facts only from
     // the first; the second is MIT.
     public const int MchoseKeyboardVendor = 0x41E4, MchoseKeyboardReceiver = 0x2001;
+    // The A5 V2 Ultra on its cable, 41E4:1101: the RealTek exchange on its 0xFF01 collection (WanCixiong/MCHOSE-Tray-Indicator,
+    // MIT, measured; its receiver is 3837:100C).
+    public const int MchoseA5Cable = 0x1101;
     public static byte[] MchoseKeyboardRequest() { var frame = new byte[20]; frame[0] = 0x13; frame[1] = 0x4A; frame[2] = 0x01; return frame; }
     public static BatteryRead? MchoseKeyboardBattery(byte[] reply)
         => reply.Length >= 6 && reply[0] == 0x13 && reply[1] == 0x4A && reply[4] > 0 && reply[5] <= 100 ? new(reply[5]) : null;
 
     // The Gmouse query (MCHOSE G3 V2 on 3837:4245 and G7 on A8A5:2255, collection 0xFF01 usage 0x10): a 65-byte output
     // report 00 55 30 A5 0B 2E 01 01 01, answered by an input report starting AA 30 with the level at 8 and charging at 9. As
-    // vigil-watt (G3 V2, measured) and HaloBattery (G7, measured) read it.
-    public static readonly (int Vendor, int Product)[] Gmouse = [(MchoseVendor, 0x4245), (0xA8A5, 0x2255)];
+    // vigil-watt (G3 V2, measured) and HaloBattery (G7, measured) read it. On 0x3837 it is one of MCHOSE's reads (MchoseReads);
+    // 0xA8A5 is a chip maker's id, so there it goes to the G7 alone.
+    public static readonly (int Vendor, int Product)[] Gmouse = [(0xA8A5, 0x2255)];
     public static byte[] GmouseRequest() { var frame = new byte[65]; new byte[] { 0x00, 0x55, 0x30, 0xA5, 0x0B, 0x2E, 0x01, 0x01, 0x01 }.CopyTo(frame, 0); return frame; }
     public static BatteryRead? GmouseBattery(byte[] reply)
     {
@@ -639,13 +714,12 @@ public static class Dongles
         frame[8] = xor;
         return frame;
     }
-    // The MCHOSE devices the mouse protocol is sent to: those that name themselves a mouse (its keyboards, headsets and the
-    // MagDock 3837:1012 speak other protocols).
-    public static bool IsMchoseMouse(int product, string name) => product is not (0x1012 or 0x6045)
-        && (name.Contains("mouse", StringComparison.OrdinalIgnoreCase) || name.Contains("鼠标", StringComparison.Ordinal));
+    // The connection at 10 is 0 while the receiver has no link to the mouse (asleep or off), 2 on the 2.4 GHz link
+    // (mitsimi/mchose-tray, GPL, facts only, and hxw-dream/MCHOSE-Battery, both measured on a K7 V2 Ultra+ on 3837:1014).
     public static BatteryRead? MchoseBattery(byte[] reply)
     {
         if (reply.Length < 21 || reply[0] != 0x4D || reply[4] != 0x00 || reply[5] != 0x09 || reply[8] == 0xFF) return null;
+        if (reply[8 + 10] == 0) return new(null, Asleep: true);
         int level = reply[8 + 12];
         return level is > 0 and <= 100 ? new(level, reply[8 + 11] != 0) : null;
     }
@@ -767,10 +841,11 @@ public static class Dongles
         if (F83Find(vendor, product) is { } f83) return F83Collection(f83, iface, usagePage, featureLength) ? Protocol.F83 : null;
         if (Gmouse.Contains((vendor, product))) return usagePage == 0xFF01 && usage == 0x0010 && outputLength >= 65 ? Protocol.Gmouse : null;
         if (vendor == NordicVendor && NinjutsoProducts.Contains(product)) return usagePage == 0xFFA0 && featureLength >= 32 ? Protocol.Nordic : null;
-        // The 7 series on either MCHOSE vendor, on its configuration collection only. A 0x3837 device's other collections still
-        // go to the 0x4D frame below where they call themselves a mouse.
-        if (IsMchoseRealtek(vendor, product, productName) && usagePage == 0xFF01 && featureLength >= 21) return Protocol.MchoseRealtek;
-        if (vendor == MchoseRealtek) return null;
+        // MCHOSE: on 0x5253 the 7 series' exchange on its configuration collection; on 0x3837 whichever of the brand's reads
+        // the collection's shape takes (MchoseReads).
+        if (vendor == MchoseRealtek) return usagePage == 0xFF01 && featureLength >= 21 ? Protocol.MchoseRealtek : null;
+        if (vendor == MchoseVendor) return MchoseReads(product, productName, usagePage, usage, featureLength, outputLength).Count > 0 ? Protocol.Mchose : null;
+        if (vendor == MchoseKeyboardVendor && product == MchoseA5Cable) return usagePage == 0xFF01 && featureLength >= 21 ? Protocol.MchoseRealtek : null;
         if (vendor == MchoseKeyboardVendor && product == MchoseKeyboardReceiver) return usagePage == 0xFF02 && inputLength >= 6 && outputLength >= 20 ? Protocol.MchoseKeyboard : null;
         if (vendor == 0x3151 && product == 0x402D) return iface == 2 && usagePage == 0xFFFF && usage == 0x0002 && featureLength == 65 ? Protocol.Lingbao : null;
         if (vendor == 0x1E71 && product is 0x2101 or 0x2129) return usagePage == 0xFFCA && usage == 0x0001 && outputLength >= 64 ? Protocol.Nzxt : null;
@@ -790,9 +865,6 @@ public static class Dongles
         if (vendor == InphicVendor && product is 0x5B2E or 0x5B2F && featureLength >= 33) return Protocol.Inphic;
         // The 2.4 GHz receiver's product is not fixed (InphicBatteryTray): only its vendor collection.
         if (vendor == InphicWireless && usagePage >= 0xFF00 && featureLength >= 33) return Protocol.Inphic;
-        // MCHOSE's mouse protocol only on MCHOSE devices that call themselves a mouse (its keyboards, headsets and the MagDock
-        // speak other protocols).
-        if (vendor == MchoseVendor && usagePage is 0xFF01 or 0xFF0B && IsMchoseMouse(product, productName)) return Protocol.Mchose;
         return null;
     }
 }
@@ -1139,7 +1211,7 @@ public static class Corsair
 public static class Headsets
 {
     public const int SteelSeries = 0x1038, HyperXHp = 0x03F0, HyperXKingston = 0x0951;
-    public enum Kind { Arctis7, Arctis9, Nova7Percent, Nova7Steps, NovaPro, CloudAlpha, CloudII, CloudFlight, MchoseX9, CloudIII, CloudIIIS, CloudAlpha2 }
+    public enum Kind { Arctis7, Arctis9, Nova7Percent, Nova7Steps, NovaPro, CloudAlpha, CloudII, CloudFlight, CloudIII, CloudIIIS, CloudAlpha2 }
 
     // Which headset a vendor and product are, and the interface (or usage page) its battery lives on.
     public static Kind? Find(int vendor, int product) => (vendor, product) switch
@@ -1159,7 +1231,6 @@ public static class Headsets
         (HyperXHp, 0x05B7 or 0x0C9D or 0x0995 or 0x0795) => Kind.CloudIII,
         (HyperXHp, 0x02CC or 0x06BE) => Kind.CloudIIIS,
         (HyperXHp, 0x08BE) => Kind.CloudAlpha2,
-        (Dongles.MchoseVendor, 0x6045) => Kind.MchoseX9,
         _ => null
     };
     // The interface (MI_xx) to talk on, or the usage page when that is what tells it apart; -1 for either.
@@ -1169,7 +1240,7 @@ public static class Headsets
     public static (int Interface, int UsagePage) Channel(Kind kind) => kind switch
     {
         Kind.Arctis7 => (5, -1), Kind.Arctis9 => (0, -1), Kind.Nova7Percent or Kind.Nova7Steps => (-1, 0xFFC0), Kind.NovaPro => (4, -1),
-        Kind.CloudII => (-1, 0xFF90), Kind.MchoseX9 => (-1, 0xFF90), Kind.CloudIII or Kind.CloudAlpha2 => (-1, 0xFF13), Kind.CloudIIIS => (3, VendorPages),
+        Kind.CloudII => (-1, 0xFF90), Kind.CloudIII or Kind.CloudAlpha2 => (-1, 0xFF13), Kind.CloudIIIS => (3, VendorPages),
         _ => (-1, VendorPages)
     };
     // The Cloud III S answers on whichever collection of its interface declares the reply's report, not always the one asked:
@@ -1191,7 +1262,6 @@ public static class Headsets
         Kind.CloudAlpha => Padded([0x21, 0xBB, 0x0B], 31),
         Kind.CloudII => Padded([0x06, 0xFF, 0xBB, 0x02], 52),
         Kind.CloudFlight => Padded([0x21, 0xFF, 0x05], 20),
-        Kind.MchoseX9 => Padded([0x55, 0x65, 0x01], 64),
         Kind.CloudIII => Padded([0x66, 0x89], 62),
         // 01 at 3 asks for a value; 00 would set one, which is never sent.
         Kind.CloudIIIS => Padded([0x0C, 0x02, 0x03, 0x01, 0x00, 0x06], 64),
@@ -1233,9 +1303,6 @@ public static class Headsets
         // Millivolts; above 4107 the headset is on its cable. The level is a line between 3648 and 3975 mV.
         Kind.CloudFlight when r.Length >= 5 && r[0] == 0x21 && r[1] == 0xFF && r[2] == 0x05 && ((r[3] << 8) | r[4]) is var mv && mv > 3000
             => new(mv > 4107 ? null : Devices.Clamp((int)Math.Round((mv - 3648) * 100.0 / (3975 - 3648))), mv > 4107, Coarse: true),
-        // 55 65 VV FF: a value and the field it belongs to. Only field 0x02 is the battery; the others (a heartbeat, other
-        // telemetry) are passed over. No field is documented to say charging.
-        Kind.MchoseX9 when r.Length >= 4 && r[0] == 0x55 && r[1] == 0x65 && r[3] == 0x02 && r[2] <= 100 => new(r[2]),
         // 66 89 (or its response id 0D): the percent at 4, unless 2 and 3 are both 0 (no reading yet).
         Kind.CloudIII when r.Length >= 5 && r[0] == 0x66 && r[1] is 0x89 or 0x0D && (r[2] != 0 || r[3] != 0) && r[4] <= 100 => new(r[4]),
         // 0C .. .. .. .. 06 <percent> (0xFF: no value), or the headset's own notice 0D with 1 at 4 and the percent at 5.
@@ -1261,12 +1328,12 @@ public static class Headsets
         Kind.Arctis7 => "SteelSeries Arctis 7", Kind.Arctis9 => "SteelSeries Arctis 9", Kind.Nova7Percent or Kind.Nova7Steps => "SteelSeries Arctis Nova 7",
         Kind.NovaPro => "SteelSeries Arctis Nova Pro Wireless", Kind.CloudAlpha => "HyperX Cloud Alpha Wireless", Kind.CloudII => "HyperX Cloud II Wireless",
         Kind.CloudFlight => "HyperX Cloud Flight", Kind.CloudIII => "HyperX Cloud III Wireless", Kind.CloudIIIS => "HyperX Cloud III S Wireless",
-        Kind.CloudAlpha2 => "HyperX Cloud Alpha 2", _ => "MCHOSE X9"
+        Kind.CloudAlpha2 => "HyperX Cloud Alpha 2", _ => ""
     };
     public static DeviceSource Source(Kind kind) => kind switch
     {
         Kind.CloudAlpha or Kind.CloudII or Kind.CloudFlight or Kind.CloudIII or Kind.CloudIIIS or Kind.CloudAlpha2 => DeviceSource.HyperX,
-        Kind.MchoseX9 => DeviceSource.Hid, _ => DeviceSource.SteelSeries
+        _ => DeviceSource.SteelSeries
     };
 }
 

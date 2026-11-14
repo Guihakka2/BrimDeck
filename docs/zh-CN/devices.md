@@ -22,11 +22,11 @@ BrimDeck 只读取电量：不会配对、断开或改动任何设备与 Windows
 | 鼠标、键盘与耳机 | 罗技（Unifying、Bolt、Lightspeed 接收器与数据线）、华硕 ROG |
 | 鼠标与键盘 | 雷蛇 |
 | 鼠标 | ATK、VXE、VGN、Pulsar、迈从（MCHOSE）、Endgame Gear、VAXEE、英菲克（Inphic）、黑爵（AJAZZ）、WLmouse、G-Wolves、LAMZU、Ninjutso、LINGBAO、NZXT、HECATE、达尔优（Dareu）、赛睿（SteelSeries）、雷柏（Rapoo）、Attack Shark、多彩（DELUX）、海盗船（Corsair） |
-| 键盘 | VGN、ATK Z87 Pro、狼蛛 AULA F87 PRO、CHERRY PIXIU75、迈从（MCHOSE）K87 与 G87 |
+| 键盘 | VGN、ATK Z87 Pro、狼蛛 AULA F87 PRO、CHERRY PIXIU75、迈从（MCHOSE） |
 | 耳机 | 赛睿（SteelSeries）、HyperX、迈从（MCHOSE）、海盗船（Corsair）、狼蛛 AULA G9、JBL Quantum 910、PULSE 3D |
 | 手柄 | Xbox、PlayStation、Steam Controller |
 
-- 每个品牌只支持已知的型号，同一品牌的其他型号不一定能读到电量。
+- 每个品牌只支持已知的型号，同一品牌的其他型号不一定能读到电量。迈从例外：迈从自有编号的设备会依次尝试迈从已知的各种读取方式，未列出的型号也可能读到电量。
 - 部分型号按公开的协议资料实现，尚未在实物上验证。读不到电量或读数不正确时，欢迎在 [Issues](https://github.com/MoFeng2223/BrimDeck/issues) 中反馈设备型号。
 - 设备休眠或超出接收范围时，显示接收器记录的上一次电量。
 

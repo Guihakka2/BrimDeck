@@ -22,11 +22,11 @@ HID devices that carry the standard battery report are shown too.
 | Mice, keyboards and headsets | Logitech (Unifying, Bolt and Lightspeed receivers, and cable), ASUS ROG |
 | Mice and keyboards | Razer |
 | Mice | ATK, VXE, VGN, Pulsar, MCHOSE, Endgame Gear, VAXEE, Inphic, AJAZZ, WLmouse, G-Wolves, LAMZU, Ninjutso, LINGBAO, NZXT, HECATE, Dareu, SteelSeries, Rapoo, Attack Shark, DELUX, Corsair |
-| Keyboards | VGN, ATK Z87 Pro, AULA F87 PRO, CHERRY PIXIU75, MCHOSE K87 and G87 |
+| Keyboards | VGN, ATK Z87 Pro, AULA F87 PRO, CHERRY PIXIU75, MCHOSE |
 | Headsets | SteelSeries, HyperX, MCHOSE, Corsair, AULA G9, JBL Quantum 910, PULSE 3D |
 | Controllers | Xbox, PlayStation, Steam Controller |
 
-- Only known models of each brand are supported; other models of the same brand may not report a battery.
+- Only known models of each brand are supported; other models of the same brand may not report a battery. MCHOSE is the exception: a device on MCHOSE's own vendor id is tried with each of the brand's known reads, so models not listed may also report a battery.
 - Some models are implemented from public protocol documentation and have not been checked on real hardware. If a battery does not show or reads wrong, please report the model in [Issues](https://github.com/MoFeng2223/BrimDeck/issues).
 - While a device sleeps or is out of range, the last charge its receiver recorded is shown.
 
