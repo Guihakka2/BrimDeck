@@ -16,7 +16,7 @@ A native Windows app built with C# and WPF, designed for performance and smoothn
 [![License](https://img.shields.io/badge/License-Apache%202.0-E5A385?style=flat-square)](LICENSE)
 ![Interface languages](https://img.shields.io/badge/Interface-English%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-B9A8FF?style=flat-square)
 
-<p><a href="#features">Features</a> · <a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="#privacy">Privacy</a> · <a href="#faq">FAQ</a> · <a href="#contributing">Contributing</a> · <a href="README.zh-CN.md">简体中文</a></p>
+<p><a href="#features">Features</a> · <a href="#install">Install</a> · <a href="#quick-start">Quick start</a> · <a href="#privacy">Privacy</a> · <a href="#faq">FAQ</a> · <a href="#community">Community</a> · <a href="#contributing">Contributing</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
 <img src="docs/en-US/images/hero.png" width="100%" alt="BrimDeck opens from the notch at the top of the screen into the AI usage panel, switches to the music page, the system monitor page, the clipboard and file transfer page and the device batteries page, then collapses">
 
@@ -202,6 +202,10 @@ The device has to be connected and be one of the connections or models listed in
 
 **Animations or the equalizer bars never move. Why?**
 BrimDeck's animations and equalizer bars need two settings turned on: BrimDeck's Settings › General › Hover and animation › Animate expanding and collapsing, and Windows Settings › Accessibility › Visual effects › Animation effects. If either is off, the expand animation, the equalizer bars and scrolling text all stop.
+
+## Community
+
+QQ group: 1132738200
 
 ## Contributing
 
