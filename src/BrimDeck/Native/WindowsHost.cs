@@ -72,11 +72,21 @@ public sealed class WindowsHost : IDisposable
         // for carets or cursors.
         if (winEvent == 0x8004 ? window != DesktopWindow : idObject != 0 || idChild != 0) return;
         // A window coming to the front may be a program just started: the players' shared process list is taken anew.
-        if (winEvent == 0x0003) ProcessSnapshot.Expire();
+        if (winEvent == 0x0003) { ProcessSnapshot.Expire(); _foregroundPending = true; }
         if (_orderCheckPending) return;
         _orderCheckPending = true;
-        _timer.Dispatcher.BeginInvoke(() => { _orderCheckPending = false; WatchOrder(_window()); });
+        _timer.Dispatcher.BeginInvoke(() =>
+        {
+            _orderCheckPending = false; WatchOrder(_window());
+            if (_foregroundPending) { _foregroundPending = false; ForegroundSwitched?.Invoke(); }
+        });
     }
+    private bool _foregroundPending;
+    // After every check of the panel's order, and when another window has taken the foreground (TaskbarMirror).
+    public event Action? OrderChecked;
+    public event Action? ForegroundSwitched;
+    // Checks the panel's order at once, without raising OrderChecked.
+    public void CheckOrder() => WatchOrderOnce(_window());
     private readonly Func<IntPtr> _window;
     private readonly Func<bool>? _forceTopmost;
     private readonly Func<bool>? _backgroundWindows;
@@ -110,7 +120,8 @@ public sealed class WindowsHost : IDisposable
     //    Recovery keeps keyboard focus unchanged and only runs when an overlapping window is found.
     //
     // A panel the user made an ordinary window (DeckSettings.AlwaysOnTop off) is watched only for show desktop (WatchDesktop).
-    private void WatchOrder(IntPtr window)
+    private void WatchOrder(IntPtr window) { WatchOrderOnce(window); OrderChecked?.Invoke(); }
+    private void WatchOrderOnce(IntPtr window)
     {
         if (window == IntPtr.Zero || !IsWindowVisible(window) || IsIconic(window)) return;
         if (_alwaysOnTop?.Invoke() == false) { WatchDesktop(window); return; }

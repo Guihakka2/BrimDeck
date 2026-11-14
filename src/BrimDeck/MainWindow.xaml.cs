@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -95,15 +97,6 @@ public partial class MainWindow : Window
         _app = app; _lead = lead;
         _host = new WindowsHost(() => MonitorHandle, () => new WindowInteropHelper(this).Handle, IslandStrip,
             () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove);
-        Rect? IslandStrip()
-        {
-            // The island border is what is drawn, in every style and whether the panel is collapsed or open — its size
-            // and place are the layout's, so PointToScreen carries the window offset, the shape's own offset, the DPI,
-            // the edge's frame and the open panel's own extent all at once. Opposite corners, as the frame may turn the island.
-            if (!IsVisible || PresentationSource.FromVisual(this) is null || PresentationSource.FromVisual(Island) is null) return null;
-            if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0)) return null;
-            return new Rect(Island.PointToScreen(new Point(0, 0)), Island.PointToScreen(new Point(Island.ActualWidth, Island.ActualHeight)));
-        }
         UpdateCollapsedGeometry();
         _hover = new(Dispatcher, () =>
         {
@@ -123,6 +116,12 @@ public partial class MainWindow : Window
         InitializeComponent();
         // Out of sight until the boot (or, without animations, until it has its place): the window shows before it is placed.
         HoverZone.Opacity = 0;
+        // The island stays in sight over a taskbar that Start or search has lifted above every application window.
+        _taskbarMirror = new TaskbarMirror(Stage, IslandStrip, IslandRegion,
+            () => IsVisible && KeepsAbove && !IsSuppressed && !_hiding && _moveOverlay is null && HoverZone.Opacity > 0,
+            _host.CheckOrder, MirrorPointer);
+        _host.OrderChecked += _taskbarMirror.Check;
+        _host.ForegroundSwitched += _taskbarMirror.Follow;
         _handover = new PageHandover(LeavingContent);
         InitializeMusic();
         InitializeMonitor();
@@ -177,7 +176,7 @@ public partial class MainWindow : Window
             if (_lead is null) { _app.AssignDisplays(); await RefreshAutomaticallyAsync(); }
         };
         Closing += (_, e) => { if (!_app.Exiting && !_retiring) { e.Cancel = true; SetExpanded(false); } };
-        Closed += (_, _) => { CancelMove(); _escapeDismissal?.Dispose(); _virtualDesktops?.Dispose(); _host.Dispose(); _hover.Stop(); _leave.Stop(); _pointerTrack.Stop(); _pageSwitchHold.Stop(); _clock.Stop(); _seconds.Stop(); _refresh.Stop(); _alertTimer.Stop(); _clipSettle?.Stop(); };
+        Closed += (_, _) => { CancelMove(); _escapeDismissal?.Dispose(); _virtualDesktops?.Dispose(); _host.Dispose(); _taskbarMirror.Dispose(); _hover.Stop(); _leave.Stop(); _pointerTrack.Stop(); _pageSwitchHold.Stop(); _clock.Stop(); _seconds.Stop(); _refresh.Stop(); _alertTimer.Stop(); _clipSettle?.Stop(); };
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) { WindowState = WindowState.Normal; SetExpanded(false); } };
         // The collapsed island opens on hover, so a right click there does nothing, except leave move mode.
         MouseWheel += PanelWheel;
@@ -209,6 +208,64 @@ public partial class MainWindow : Window
             return IntPtr.Zero;
         });
         Closed += (_, _) => DisposeMusic();
+    }
+
+    private readonly TaskbarMirror _taskbarMirror;
+    // The island border is what is drawn, in every style and whether the panel is collapsed or open — its size and place are
+    // the layout's, so PointToScreen carries the window offset, the shape's own offset, the DPI, the edge's frame and the open
+    // panel's own extent all at once. Opposite corners, as the frame may turn the island. In screen physical pixels.
+    private Rect? IslandStrip()
+    {
+        if (!IsVisible || PresentationSource.FromVisual(this) is null || PresentationSource.FromVisual(Island) is null) return null;
+        if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0)) return null;
+        return new Rect(Island.PointToScreen(new Point(0, 0)), Island.PointToScreen(new Point(Island.ActualWidth, Island.ActualHeight)));
+    }
+    // The same island where a visual brush of the stage draws it: in the stage's parent, as the brush draws the stage with its
+    // offset and the edge's turn (Stage.LayoutTransform) applied.
+    private Rect? IslandRegion()
+    {
+        if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0) || VisualTreeHelper.GetParent(Stage) is not Visual parent || !Island.IsDescendantOf(parent)) return null;
+        return Island.TransformToAncestor(parent).TransformBounds(new Rect(0, 0, Island.ActualWidth, Island.ActualHeight));
+    }
+
+    // A press, a release or a wheel turn over the taskbar mirror (TaskbarMirror), at a place on screen in physical pixels. It is
+    // raised as WPF's own mouse events on the element at that place, so the island opens on a click as it does itself and the
+    // open panel's part over the taskbar takes clicks and the wheel. A raised press does not give a button the capture it takes
+    // on a real one (the mirror keeps it, so that the release comes back), so a button the press did not leave pressed is
+    // clicked through its automation peer on the release.
+    private ButtonBase? _mirrorPressed;
+    private bool MirrorPointer(uint message, Point screen, int delta)
+    {
+        if (PresentationSource.FromVisual(Stage) is null || Stage.InputHitTest(Stage.PointFromScreen(screen)) is not UIElement target) return false;
+        int time = Environment.TickCount;
+        if (message is 0x020A) // WM_MOUSEWHEEL
+        {
+            var preview = new MouseWheelEventArgs(Mouse.PrimaryDevice, time, delta) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+            target.RaiseEvent(preview);
+            target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, time, delta) { RoutedEvent = Mouse.MouseWheelEvent, Handled = preview.Handled });
+            return true;
+        }
+        bool press = message is 0x0201 or 0x0204 or 0x0207;
+        if (!press && message is not (0x0202 or 0x0205 or 0x0208)) return false;
+        var button = message is 0x0201 or 0x0202 ? MouseButton.Left : message is 0x0204 or 0x0205 ? MouseButton.Right : MouseButton.Middle;
+        ButtonBase? owner = null;
+        for (DependencyObject? at = target; at is not null && !ReferenceEquals(at, Stage); at = VisualTreeHelper.GetParent(at))
+            if (at is ButtonBase found) { owner = found; break; }
+        if (press && button == MouseButton.Left) _mirrorPressed = owner;
+        bool pressed = owner?.IsPressed == true;
+        var first = new MouseButtonEventArgs(Mouse.PrimaryDevice, time, button) { RoutedEvent = press ? Mouse.PreviewMouseDownEvent : Mouse.PreviewMouseUpEvent };
+        target.RaiseEvent(first);
+        target.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, time, button) { RoutedEvent = press ? Mouse.MouseDownEvent : Mouse.MouseUpEvent, Handled = first.Handled });
+        if (!press && button == MouseButton.Left)
+        {
+            if (owner is not null && ReferenceEquals(owner, _mirrorPressed) && !pressed && owner.IsEnabled && UIElementAutomationPeer.CreatePeerForElement(owner) is { } peer)
+            {
+                if (peer.GetPattern(PatternInterface.Invoke) is IInvokeProvider invoke) invoke.Invoke();
+                else if (peer.GetPattern(PatternInterface.Toggle) is IToggleProvider toggle) toggle.Toggle();
+            }
+            _mirrorPressed = null;
+        }
+        return true;
     }
 
     // Closes a panel whose monitor no longer shows one.
