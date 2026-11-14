@@ -326,6 +326,8 @@ internal sealed class SystemSampler : IDisposable
     private void Rest()
     {
         ForgetWindowed();
+        // Sampling paused as a whole: the network's baseline goes (the totals stay), so the time paused is not counted when it resumes.
+        _network.Forget();
         _power!.Sample(false, false, 0, [], default, false); _storage.Rest(); _bridges.Rest();
         _lastProcesses = Reading<ProcessList>.Unavailable(Why.Waiting);
         _processes.Forget();

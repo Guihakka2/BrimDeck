@@ -112,8 +112,8 @@ internal sealed class MonitorStrip : FrameworkElement
             Math.Round(9 * _scale) + Math.Round(3 * _scale) + Math.Ceiling(Math.Max(text("99.9M"), text("99.9G"))), DrivesWidth(),
             Math.Round(9 * _scale) + Math.Round(3 * _scale) + FigureWidth("999W"), BatteryWidth + Math.Round(3 * _scale) + FigureWidth(WidestPercent),
             FramesSlot + Math.Round(3 * _scale) + FigureWidth(WidestFrames) + Math.Round(2 * _scale) + SmallWidth(FramesUnit));
-        // A total takes the room of its widest figure ("999M", "99.9G", "999B"), its own rather than the rate's.
-        double totalWidth = Math.Round(9 * _scale) + Math.Round(3 * _scale) + Math.Ceiling(Math.Max(text("999M"), Math.Max(text("99.9G"), text("999B"))));
+        // A total takes the room of its widest figure ("999M", "99.9M", "99.9G", "999B"), its own rather than the rate's.
+        double totalWidth = Math.Round(9 * _scale) + Math.Round(3 * _scale) + Math.Ceiling(Math.Max(Math.Max(text("999M"), text("99.9M")), Math.Max(text("99.9G"), text("999B"))));
         _width = item => (_total & item) != 0 ? totalWidth : widths(item);
     }
 
