@@ -120,12 +120,13 @@ public partial class MainWindow : Window
         HoverZone.Opacity = 0;
         // The island stays in sight over a taskbar that Start or search has lifted above every application window, and above
         // other apps' topmost windows when the panel is to stay above them (DeckSettings.MirrorTopmost).
-        _taskbarMirror = new TaskbarMirror(IslandStrip,
+        _taskbarMirror = new TaskbarMirror(IslandStrip, IslandReach,
             () => IsVisible && KeepsAbove && !IsSuppressed && !_hiding && _moveOverlay is null && HoverZone.Opacity > 0,
             _host.CheckOrder, () => new WindowInteropHelper(this).Handle, _host.TopmostCover, MirrorHit, MirrorPointer);
         _host.CanMirror = () => _taskbarMirror.Available;
         _host.OrderChecked += _taskbarMirror.Check;
         _host.ForegroundSwitched += _taskbarMirror.Follow;
+        LayoutUpdated += (_, _) => _taskbarMirror.Track();
         _handover = new PageHandover(LeavingContent);
         InitializeMusic();
         InitializeMonitor();
@@ -224,6 +225,16 @@ public partial class MainWindow : Window
         if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0)) return null;
         return new Rect(Island.PointToScreen(new Point(0, 0)), Island.PointToScreen(new Point(Island.ActualWidth, Island.ActualHeight)));
     }
+    // The island with room for its resize grips beside it (they reach up to about 22 DIP past its ends) while the pointer is near
+    // it or a resize runs, in screen physical pixels: what the taskbar mirror shows. Away from the pointer the island alone, so
+    // the mirror leaves the taskbar around it to the taskbar.
+    private Rect? IslandReach()
+    {
+        if (IslandStrip() is not { } strip) return null;
+        double room = 24 * (_pixelsPerDip > 0 ? _pixelsPerDip : 1);
+        return Resizing || Rect.Inflate(strip, 2 * room, 2 * room).Contains(WindowsHost.Cursor()) ? Rect.Inflate(strip, room, room) : strip;
+    }
+
     // What the taskbar mirror (TaskbarMirror) asks of a window of the panel it shows: the panel itself (its stage, as the window
     // is clear around it) or one of its pop-ups.
     private UIElement? MirrorRoot(IntPtr window)

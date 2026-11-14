@@ -170,7 +170,7 @@ public sealed class WindowsHost : IDisposable
             }
         }
         if (cause is null) return;
-        if (recover) SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+        if (recover) RaiseWithOwn(window);
         // The same note, by cause, process and outcome, is logged at most every ten seconds. An app can cover the panel
         // with a new window every moment, or uncover it for a moment between two, so neither the window nor a break in
         // the obstruction makes a note new.
@@ -181,6 +181,20 @@ public sealed class WindowsHost : IDisposable
         if (_orderNotes.Count >= 32) foreach (var old in _orderNotes.Where(n => now - n.Value >= 10000).Select(n => n.Key).ToList()) _orderNotes.Remove(old);
         _orderNotes[note] = now;
         NoteOrder($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {note}");
+    }
+    // Puts the panel on top of the topmost windows, and its own windows that were above it (its menus, tooltips and detail
+    // windows) back above it, in the order they had: raised alone, the panel would cover an open menu of its own.
+    private static void RaiseWithOwn(IntPtr window)
+    {
+        var own = new List<IntPtr>();
+        for (var above = GetWindow(window, 3); above != IntPtr.Zero && own.Count < 32; above = GetWindow(above, 3))
+        {
+            if (!IsWindowVisible(above) || (GetWindowLongPtr(above, -20).ToInt64() & 0x8) == 0) continue;
+            GetWindowThreadProcessId(above, out var pid);
+            if (pid == Environment.ProcessId) own.Add(above);
+        }
+        SetWindowPos(window, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_TOPMOST; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+        foreach (var above in own) SetWindowPos(above, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
     }
     // The part of an area, in screen physical pixels, that other apps' topmost windows above the panel cover where they reach the
     // island, as one rectangle around every covered part; null when none does or MirrorTopmost is off. Menus over the island are

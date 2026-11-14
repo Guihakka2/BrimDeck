@@ -10,13 +10,15 @@ namespace BrimDeck.Native;
 // window lives (topmost ones included), into a higher band of the shell's, and moves it back a second or two after the flyout
 // closes. No ordinary window can follow it there, so a collapsed island over the taskbar is hidden behind it all that while.
 // An ordinary process can still create a window in band 16, the band of explorer's task switcher, which lies above the
-// lifted taskbar. While the taskbar under the island is lifted, such a window ("lens") lies over the part of the panel's
-// window that the taskbar covers and shows that part through a DWM thumbnail: the desktop compositor draws the panel's live
-// picture there, at the panel's own frame rate and with its transparency, and the panel draws nothing more. The panel's window
-// keeps its size while it is used (only the island inside it moves), so the lens stays put through animations and resizing,
-// and the resize grips beside the island show in it too. The panel's own pop-ups over that part (menus, tooltips) get a lens
-// of their own above it. The lenses exist only while they are needed. Both band calls are undocumented; where either is
-// missing or refused, no lens is shown and the island is covered as before.
+// lifted taskbar. While the taskbar under the island is lifted, such a window ("lens") lies over the part of the island the
+// taskbar covers and shows it through a DWM thumbnail of the panel's window: the desktop compositor draws the panel's live
+// picture there, at the panel's own frame rate and with its transparency, and the panel draws nothing more. The lens covers
+// the island alone, with room for the resize grips beside it while the pointer is near (_reach), and follows the island's
+// layout as it changes; the rest of the taskbar stays the taskbar's. (A lens across the whole taskbar did not let clicks
+// through its clear parts: a window answering HTTRANSPARENT hands the mouse only to windows of its own thread.) The panel's
+// own pop-ups over that part (menus, tooltips) get a lens of their own above it. The lenses exist only while they are
+// needed. Both band calls are undocumented; where either is missing or refused, no lens is shown and the island is covered
+// as before.
 //
 // The same lenses keep the panel above other apps' topmost windows when the user asks for it (DeckSettings.MirrorTopmost):
 // the part they cover is shown above them, and the panel no longer raises itself over them again and again.
@@ -29,8 +31,9 @@ internal sealed class TaskbarMirror : IDisposable
 {
     private const uint DesktopBand = 1, SwitcherBand = 16;
     private const string ClassName = "BrimDeckTaskbarMirror";
-    // The island in screen physical pixels: whether it reaches into a lifted taskbar decides whether a lens is needed.
-    private readonly Func<Rect?> _strip;
+    // The island in screen physical pixels: whether it reaches into a lifted taskbar decides whether a lens is needed. The
+    // reach is the island with room for its resize grips while the pointer is near or a resize runs: the lens shows that much.
+    private readonly Func<Rect?> _strip, _reach;
     private readonly Func<bool> _wanted;
     // Puts the panel back above a taskbar that has come down to band 1, before the lenses leave.
     private readonly Action _raise;
@@ -53,10 +56,10 @@ internal sealed class TaskbarMirror : IDisposable
     // False once a band call is found missing or refused.
     public bool Available => !_unavailable;
 
-    public TaskbarMirror(Func<Rect?> strip, Func<bool> wanted, Action raise, Func<IntPtr> panel, Func<Rect, Rect, Rect?> topmost,
+    public TaskbarMirror(Func<Rect?> strip, Func<Rect?> reach, Func<bool> wanted, Action raise, Func<IntPtr> panel, Func<Rect, Rect, Rect?> topmost,
         Func<IntPtr, Point, bool> hit, Func<IntPtr, uint, Point, int, bool> pointer)
     {
-        _strip = strip; _wanted = wanted; _raise = raise; _panel = panel; _topmost = topmost; _hit = hit; _pointer = pointer;
+        _strip = strip; _reach = reach; _wanted = wanted; _raise = raise; _panel = panel; _topmost = topmost; _hit = hit; _pointer = pointer;
         _panelLens = new Lens(this);
         _collectPopup = (window, _) => { _popups.Add(window); return true; };
         _frame.Tick += (_, _) => Frame();
@@ -69,6 +72,12 @@ internal sealed class TaskbarMirror : IDisposable
         if (_unavailable) return;
         if (_wanted() && Covered() is { } area) Show(area);
         else if (_shown) Hide();
+    }
+
+    // Called after each layout of the panel: a shown lens follows the island as it opens, closes or is resized.
+    public void Track()
+    {
+        if (_shown) Check();
     }
 
     // Called when another window takes the foreground.
@@ -86,13 +95,12 @@ internal sealed class TaskbarMirror : IDisposable
         Hide();
     }
 
-    // The part of the panel's window to show above, in screen physical pixels: where a taskbar that is out of band 1 covers it,
+    // The part of the island's reach to show above, in screen physical pixels: where a taskbar that is out of band 1 covers it,
     // when that taskbar reaches the island, and where other topmost windows cover it when the panel is to stay above them
     // (_topmost, DeckSettings.MirrorTopmost); null when none.
     private Rect? Covered()
     {
-        if (_strip() is not { } strip || !GetWindowRect(_panel(), out var w)) return null;
-        var window = ToRect(w);
+        if (_strip() is not { } strip || _reach() is not { } window) return null;
         Rect? area = _topmost(strip, window);
         try
         {
@@ -270,8 +278,19 @@ internal sealed class TaskbarMirror : IDisposable
         // After the window has acted on it: a control that takes the capture on a press would otherwise keep the drag and the
         // release from the lens.
         if (message is 0x0201 or 0x0204 or 0x0207) { _pressed ??= lens; SetCapture(_pressed.Window); } // WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN
-        else if (message is 0x0202 or 0x0205 or 0x0208) EndPress();
+        else if (message is 0x0202 or 0x0205 or 0x0208) { EndPress(); Uncapture(target); }
         return handled;
+    }
+    // A control that held the capture through the press lets go of it on the release: WPF asks Windows to release it and keeps the
+    // control as its capture until Windows reports the change. The lens held it, so the report goes to the lens, and the window's
+    // hook would hold it back anyway; the control stayed the capture, its pointer shape on screen (a grip's two-way arrow), until
+    // the pointer left the lenses. The window is told itself.
+    private void Uncapture(IntPtr target)
+    {
+        if (GetCapture() == target || Mouse.Captured is not DependencyObject held || PresentationSource.FromDependencyObject(held) is not HwndSource source || source.Handle != target) return;
+        _forwarding = true;
+        try { SendMessage(target, 0x0215, IntPtr.Zero, IntPtr.Zero); } // WM_CAPTURECHANGED
+        finally { _forwarding = false; }
     }
     private void EndPress()
     {
@@ -295,6 +314,8 @@ internal sealed class TaskbarMirror : IDisposable
     private bool Hover(Lens lens, IntPtr wParam, IntPtr lParam)
     {
         var target = _pressed?.Target ?? lens.Target;
+        // An open menu of the panel's holds the capture; taking it for a move would close the menu.
+        if (GetCapture() is var held && held != IntPtr.Zero && held != target && !Lenses.ContainsKey(held)) return true;
         if (!_hooked.Contains(target) && HwndSource.FromHwnd(target) is { } source) { source.AddHook(TargetMessages); _hooked.Add(target); }
         if (!_inputHooked) { InputManager.Current.PreProcessInput += KeepForwarded; _inputHooked = true; }
         // Giving and taking back the capture makes Windows send the window under the pointer a move of its own; a move to the
@@ -326,7 +347,7 @@ internal sealed class TaskbarMirror : IDisposable
     }
     private IntPtr TargetMessages(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (_hovering && message is 0x02A3 or 0x0215) handled = true; // WM_MOUSELEAVE, WM_CAPTURECHANGED
+        if (_hovering && !_forwarding && message is 0x02A3 or 0x0215) handled = true; // WM_MOUSELEAVE, WM_CAPTURECHANGED
         return IntPtr.Zero;
     }
     // Each frame, and when the lenses leave: once the pointer has left the lenses with no button held, the window it was over
