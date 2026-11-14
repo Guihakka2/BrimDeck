@@ -62,6 +62,7 @@ try
     DeviceReadTests.Run(Check);
     BrandFamilyTests.Run(Check);
     BrandsControllerTests.Run(Check);
+    BrandsKeyboardTests.Run(Check);
     PowerTests.Run(Check);
     DevicesPageTests.Run(Check);
     FrameRateTests.Run(Check);
