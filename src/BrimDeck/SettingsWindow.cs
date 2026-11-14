@@ -696,7 +696,7 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         {
             switch(_page)
             {
-                case 0:s.LaunchAtStartup=false;s.ShowTrayIcon=defaults.ShowTrayIcon;s.MemoryMode=defaults.MemoryMode;s.Theme=defaults.Theme;s.Language=Loc.SystemLanguage();s.OpenDelay=defaults.OpenDelay;s.ClickToExpand=defaults.ClickToExpand;s.CloseDelay=defaults.CloseDelay;s.Animations=defaults.Animations;s.AnimationDuration=defaults.AnimationDuration;s.AlwaysOnTop=defaults.AlwaysOnTop;s.ForceTopmost=defaults.ForceTopmost;s.MirrorTopmost=defaults.MirrorTopmost;s.Maximized=defaults.Maximized;s.Borderless=defaults.Borderless;s.Exclusive=defaults.Exclusive;s.FullscreenRules=[];s.Display=defaults.Display;s.DisplayMonitors=[];s.PanelScale=defaults.PanelScale;s.SurfaceTransparency=defaults.SurfaceTransparency;s.UiFont=defaults.UiFont;s.SettingsFollowsFont=defaults.SettingsFollowsFont;
+                case 0:s.LaunchAtStartup=false;s.ShowTrayIcon=defaults.ShowTrayIcon;s.MemoryMode=defaults.MemoryMode;s.Theme=defaults.Theme;s.Language=Loc.SystemLanguage();s.OpenDelay=defaults.OpenDelay;s.ClickToExpand=defaults.ClickToExpand;s.CloseDelay=defaults.CloseDelay;s.Animations=defaults.Animations;s.AnimationDuration=defaults.AnimationDuration;s.AlwaysOnTop=defaults.AlwaysOnTop;s.ForceTopmost=defaults.ForceTopmost;s.Maximized=defaults.Maximized;s.Borderless=defaults.Borderless;s.Exclusive=defaults.Exclusive;s.FullscreenRules=[];s.Display=defaults.Display;s.DisplayMonitors=[];s.PanelScale=defaults.PanelScale;s.SurfaceTransparency=defaults.SurfaceTransparency;s.UiFont=defaults.UiFont;s.SettingsFollowsFont=defaults.SettingsFollowsFont;
                     s.ClickThrough=defaults.ClickThrough;s.ClickThroughPanel=defaults.ClickThroughPanel;s.WindowCapture=defaults.WindowCapture;break;
                 case HotkeysPage:foreach(var kind in Enum.GetValues<HotkeyKind>())s.SetHotkey(kind,defaults.Hotkey(kind));break;
                 case 1:s.Style=defaults.Style;s.NotchSummary=defaults.NotchSummary;s.NotchMusic=defaults.NotchMusic;s.CapsuleSummary=defaults.CapsuleSummary;s.CapsuleMusic=defaults.CapsuleMusic;s.MusicIndicatorProgress=defaults.MusicIndicatorProgress;
@@ -795,21 +795,9 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         });
         raise.BorderBrush = UI.Brush(_palette.Border);
         raise.Background = UI.Brush(_palette.Input);
-        // The two ways of staying on top do not run together: each switch can be turned on only while the other is off.
-        CheckBox? force = null, mirror = null;
-        var forceRow = Toggle(Loc.T("持续置顶", "Keep on top"), S.ForceTopmost,
-            value => { Change(s => s.ForceTopmost = value); if (mirror is not null) mirror.IsEnabled = !value; }, enabled: !S.MirrorTopmost, help:
-            Loc.T("开启后，面板被其他置顶窗口遮挡时会立即恢复到上方，其他应用打开的菜单除外。仍遵循上面的显示与隐藏规则。若其他应用反复置顶自己，面板会暂停恢复几秒。与“强制置顶（测试版）”不能同时开启。",
-                "Restores the panel above other always-on-top windows as soon as it is covered, except for menus other apps open. Display and hide rules above still apply. If an app keeps raising itself, the panel pauses for a few seconds. Cannot be on together with Force on top (test)."));
-        var mirrorRow = Toggle(Loc.T("强制置顶（测试版）", "Force on top (test)"), S.MirrorTopmost,
-            value => { Change(s => s.MirrorTopmost = value); if (force is not null) force.IsEnabled = !value; }, enabled: !S.ForceTopmost, help:
-            Loc.T("面板被其他置顶窗口遮挡时，被遮挡的部分仍显示在最上方，可以正常操作，不再与其他窗口反复争夺位置。其他应用打开的菜单除外。需先关闭“持续置顶”。",
-                "The part of the panel another always-on-top window covers still shows on top and works as usual, without fighting that window for the top. Menus other apps open are excepted. Turn off Keep on top first."));
-        force = (forceRow as Grid)?.Children.OfType<CheckBox>().FirstOrDefault();
-        mirror = (mirrorRow as Grid)?.Children.OfType<CheckBox>().FirstOrDefault();
-        keep.Children.Add(forceRow);
-        keep.Children.Add(new Border { Height = 1, Background = UI.Brush(_palette.RowDivider) });
-        keep.Children.Add(mirrorRow);
+        keep.Children.Add(Toggle(Loc.T("持续置顶", "Keep on top"), S.ForceTopmost, value => Change(s => s.ForceTopmost = value), help:
+            Loc.T("开启后，面板被其他置顶窗口遮挡时，被遮挡的部分仍显示在最上方，可以正常操作，不与对方反复争夺位置。其他应用打开的菜单除外。仍遵循上面的显示与隐藏规则。",
+                "The part of the panel another always-on-top window covers still shows on top and works as usual, without fighting that window for the top. Menus other apps open are excepted. Display and hide rules above still apply.")));
         keep.Children.Add(new Border { Height = 1, Background = UI.Brush(_palette.RowDivider) });
         var topRows = new StackPanel();
         topRows.Children.Add(keep);

@@ -20,7 +20,7 @@ namespace BrimDeck.Native;
 // needed. Both band calls are undocumented; where either is missing or refused, no lens is shown and the island is covered
 // as before.
 //
-// The same lenses keep the panel above other apps' topmost windows when the user asks for it (DeckSettings.MirrorTopmost):
+// The same lenses keep the panel above other apps' topmost windows when the user asks for it (DeckSettings.ForceTopmost):
 // the part they cover is shown above them, and the panel no longer raises itself over them again and again.
 //
 // The mouse over a lens reaches the window it shows: a clear spot lets the mouse through to what lies beneath (the taskbar);
@@ -97,7 +97,7 @@ internal sealed class TaskbarMirror : IDisposable
 
     // The part of the island's reach to show above, in screen physical pixels: where a taskbar that is out of band 1 covers it,
     // when that taskbar reaches the island, and where other topmost windows cover it when the panel is to stay above them
-    // (_topmost, DeckSettings.MirrorTopmost); null when none.
+    // (_topmost, DeckSettings.ForceTopmost); null when none.
     private Rect? Covered()
     {
         if (_strip() is not { } strip || _reach() is not { } window) return null;

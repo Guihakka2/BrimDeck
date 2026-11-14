@@ -98,7 +98,7 @@ public partial class MainWindow : Window
     {
         _app = app; _lead = lead;
         _host = new WindowsHost(() => MonitorHandle, () => new WindowInteropHelper(this).Handle, IslandStrip,
-            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove, () => Settings.MirrorTopmost);
+            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove);
         UpdateCollapsedGeometry();
         _hover = new(Dispatcher, () =>
         {
@@ -119,7 +119,7 @@ public partial class MainWindow : Window
         // Out of sight until the boot (or, without animations, until it has its place): the window shows before it is placed.
         HoverZone.Opacity = 0;
         // The island stays in sight over a taskbar that Start or search has lifted above every application window, and above
-        // other apps' topmost windows when the panel is to stay above them (DeckSettings.MirrorTopmost).
+        // other apps' topmost windows when the panel is to stay above them (DeckSettings.ForceTopmost).
         _taskbarMirror = new TaskbarMirror(IslandStrip, IslandReach,
             () => IsVisible && KeepsAbove && !IsSuppressed && !_hiding && _moveOverlay is null && HoverZone.Opacity > 0,
             _host.CheckOrder, () => new WindowInteropHelper(this).Handle, _host.TopmostCover, MirrorHit, MirrorPointer);

@@ -574,11 +574,10 @@ public sealed class DeckSettings
     // opens, and over the desktop while the desktop is shown; ForceTopmost then does not apply. The window rules still do:
     // Normal leaves it covered, Line puts the indicator above the window that fills the screen, Hide hides it.
     public bool AlwaysOnTop { get; set; } = true;
+    // The panel stays above other always-on-top windows too: the part one covers is shown above it in a window of a higher band
+    // (TaskbarMirror), so the panel stays on top without raising itself again and again. Where that window cannot be made, the
+    // panel is raised again whenever it is covered.
     public bool ForceTopmost { get; set; }
-    // The test version of ForceTopmost: the part of the panel another always-on-top window covers is shown above it in a window
-    // of a higher band (TaskbarMirror), so the panel stays on top without raising itself again and again. The two do not run
-    // together; the settings allow one at a time.
-    public bool MirrorTopmost { get; set; }
     // The panel window can be captured on its own by recording apps (OBS window capture). Off, the window keeps the no-activate
     // style that recording apps cannot capture, and that keeps it out of Alt+Tab.
     public bool WindowCapture { get; set; }
