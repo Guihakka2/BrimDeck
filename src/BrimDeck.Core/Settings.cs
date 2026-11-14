@@ -575,6 +575,10 @@ public sealed class DeckSettings
     // Normal leaves it covered, Line puts the indicator above the window that fills the screen, Hide hides it.
     public bool AlwaysOnTop { get; set; } = true;
     public bool ForceTopmost { get; set; }
+    // The test version of ForceTopmost: the part of the panel another always-on-top window covers is shown above it in a window
+    // of a higher band (TaskbarMirror), so the panel stays on top without raising itself again and again. The two do not run
+    // together; the settings allow one at a time.
+    public bool MirrorTopmost { get; set; }
     // The panel window can be captured on its own by recording apps (OBS window capture). Off, the window keeps the no-activate
     // style that recording apps cannot capture, and that keeps it out of Alt+Tab.
     public bool WindowCapture { get; set; }

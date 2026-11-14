@@ -98,7 +98,7 @@ public partial class MainWindow : Window
     {
         _app = app; _lead = lead;
         _host = new WindowsHost(() => MonitorHandle, () => new WindowInteropHelper(this).Handle, IslandStrip,
-            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove);
+            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove, () => Settings.MirrorTopmost);
         UpdateCollapsedGeometry();
         _hover = new(Dispatcher, () =>
         {
@@ -118,10 +118,12 @@ public partial class MainWindow : Window
         InitializeComponent();
         // Out of sight until the boot (or, without animations, until it has its place): the window shows before it is placed.
         HoverZone.Opacity = 0;
-        // The island stays in sight over a taskbar that Start or search has lifted above every application window.
-        _taskbarMirror = new TaskbarMirror(Stage, IslandStrip, IslandRegion,
+        // The island stays in sight over a taskbar that Start or search has lifted above every application window, and above
+        // other apps' topmost windows when the panel is to stay above them (DeckSettings.MirrorTopmost).
+        _taskbarMirror = new TaskbarMirror(IslandStrip,
             () => IsVisible && KeepsAbove && !IsSuppressed && !_hiding && _moveOverlay is null && HoverZone.Opacity > 0,
-            _host.CheckOrder, MirrorPointer, () => new WindowInteropHelper(this).Handle);
+            _host.CheckOrder, () => new WindowInteropHelper(this).Handle, _host.TopmostCover, MirrorHit, MirrorPointer);
+        _host.CanMirror = () => _taskbarMirror.Available;
         _host.OrderChecked += _taskbarMirror.Check;
         _host.ForegroundSwitched += _taskbarMirror.Follow;
         _handover = new PageHandover(LeavingContent);
@@ -222,23 +224,28 @@ public partial class MainWindow : Window
         if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0)) return null;
         return new Rect(Island.PointToScreen(new Point(0, 0)), Island.PointToScreen(new Point(Island.ActualWidth, Island.ActualHeight)));
     }
-    // The same island where a visual brush of the stage draws it: in the stage's parent, as the brush draws the stage with its
-    // offset and the edge's turn (Stage.LayoutTransform) applied.
-    private Rect? IslandRegion()
+    // What the taskbar mirror (TaskbarMirror) asks of a window of the panel it shows: the panel itself (its stage, as the window
+    // is clear around it) or one of its pop-ups.
+    private UIElement? MirrorRoot(IntPtr window)
     {
-        if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0) || VisualTreeHelper.GetParent(Stage) is not Visual parent || !Island.IsDescendantOf(parent)) return null;
-        return Island.TransformToAncestor(parent).TransformBounds(new Rect(0, 0, Island.ActualWidth, Island.ActualHeight));
+        if (window == new WindowInteropHelper(this).Handle) return PresentationSource.FromVisual(Stage) is null ? null : Stage;
+        return HwndSource.FromHwnd(window)?.RootVisual as UIElement;
     }
+    // Whether that window draws at a place on screen, in physical pixels; where it does not, the mouse passes the mirror.
+    private bool MirrorHit(IntPtr window, Point screen) => MirrorRoot(window) is { } root && root.InputHitTest(root.PointFromScreen(screen)) is not null;
 
-    // A press, a release or a wheel turn over the taskbar mirror (TaskbarMirror), at a place on screen in physical pixels. It is
-    // raised as WPF's own mouse events on the element at that place, so the island opens on a click as it does itself and the
-    // open panel's part over the taskbar takes clicks and the wheel. A raised press does not give a button the capture it takes
-    // on a real one (the mirror keeps it, so that the release comes back), so a button the press did not leave pressed is
-    // clicked through its automation peer on the release.
+    // A press, a release or a wheel turn over the taskbar mirror, at a place on screen in physical pixels. It is raised as WPF's
+    // own mouse events on the element at that place (or on the element that holds the mouse, as during a drag), so the island
+    // opens on a click as it does itself and the open panel's part over the taskbar takes clicks and the wheel. A raised press
+    // does not give a button the capture it takes on a real one (the mirror keeps it, so that the release comes back), so a
+    // button the press did not leave pressed is clicked through its automation peer on the release.
     private ButtonBase? _mirrorPressed;
-    private bool MirrorPointer(uint message, Point screen, int delta)
+    private bool MirrorPointer(IntPtr window, uint message, Point screen, int delta)
     {
-        if (PresentationSource.FromVisual(Stage) is null || Stage.InputHitTest(Stage.PointFromScreen(screen)) is not UIElement target) return false;
+        if (MirrorRoot(window) is not { } root) return false;
+        var target = Mouse.Captured as UIElement is { } held && PresentationSource.FromVisual(held) == PresentationSource.FromVisual(root) ? held
+            : root.InputHitTest(root.PointFromScreen(screen)) as UIElement;
+        if (target is null) return false;
         int time = Environment.TickCount;
         if (message is 0x020A) // WM_MOUSEWHEEL
         {
@@ -251,7 +258,7 @@ public partial class MainWindow : Window
         if (!press && message is not (0x0202 or 0x0205 or 0x0208)) return false;
         var button = message is 0x0201 or 0x0202 ? MouseButton.Left : message is 0x0204 or 0x0205 ? MouseButton.Right : MouseButton.Middle;
         ButtonBase? owner = null;
-        for (DependencyObject? at = target; at is not null && !ReferenceEquals(at, Stage); at = VisualTreeHelper.GetParent(at))
+        for (DependencyObject? at = target; at is not null && !ReferenceEquals(at, root); at = VisualTreeHelper.GetParent(at))
             if (at is ButtonBase found) { owner = found; break; }
         if (press && button == MouseButton.Left) _mirrorPressed = owner;
         bool pressed = owner?.IsPressed == true;

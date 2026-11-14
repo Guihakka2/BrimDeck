@@ -44,11 +44,13 @@ public sealed class WindowsHost : IDisposable
     // detected for, and a change of either is a change: two apps can read as the same context with different app rules.
     // backgroundWindows says whether a full-screen window behind the foreground one counts; off, only the foreground is read.
     // alwaysOnTop says whether the panel is a topmost overlay; off, it is an ordinary window (see WatchDesktop).
+    // mirrorTopmost says whether a panel covered by another topmost window is shown above it by the mirror (TopmostCover)
+    // instead of being raised again; it has no effect while forceTopmost is on.
     public WindowsHost(Func<IntPtr> monitor, Func<IntPtr> window, Func<Rect?> island, Func<bool>? forceTopmost = null,
-        Func<bool>? backgroundWindows = null, Func<bool>? alwaysOnTop = null)
+        Func<bool>? backgroundWindows = null, Func<bool>? alwaysOnTop = null, Func<bool>? mirrorTopmost = null)
     {
         _monitor = monitor; _window = window; _island = island; _forceTopmost = forceTopmost; _backgroundWindows = backgroundWindows;
-        _alwaysOnTop = alwaysOnTop;
+        _alwaysOnTop = alwaysOnTop; _mirrorTopmost = mirrorTopmost;
         _timer.Tick += (_, _) => Poll();
         _timer.Start();
         _desktopSettle.Tick += (_, _) => { _desktopSettle.Stop(); RaiseOverDesktop(_window()); };
@@ -88,7 +90,10 @@ public sealed class WindowsHost : IDisposable
     // Checks the panel's order at once, without raising OrderChecked.
     public void CheckOrder() => WatchOrderOnce(_window());
     private readonly Func<IntPtr> _window;
-    private readonly Func<bool>? _forceTopmost;
+    private readonly Func<bool>? _forceTopmost, _mirrorTopmost;
+    // Whether the mirror can be shown; where it cannot, MirrorTopmost raises the panel again as ForceTopmost does.
+    public Func<bool>? CanMirror { get; set; }
+    public bool MirrorsTopmost => _mirrorTopmost?.Invoke() == true && _forceTopmost?.Invoke() != true && CanMirror?.Invoke() != false;
     private readonly Func<bool>? _backgroundWindows;
     private readonly Func<bool>? _alwaysOnTop;
     // The strip the island actually draws in, in screen physical pixels, as of the last layout; null before the first.
@@ -117,7 +122,9 @@ public sealed class WindowsHost : IDisposable
     //  - another topmost window covering the island: often deliberate, a pinned video, a screenshot mask, another
     //    overlay. Leave it above the panel unless the user enabled ForceTopmost. The taskbar is always recovered from.
     //    A menu open over the island is always left alone, and so is an app that keeps raising itself (see Yield).
-    //    Recovery keeps keyboard focus unchanged and only runs when an overlapping window is found.
+    //    Recovery keeps keyboard focus unchanged and only runs when an overlapping window is found. With MirrorTopmost the
+    //    panel is not raised: the covered part is shown above the other window by the mirror (TopmostCover), so the two do
+    //    not trade places and the other window keeps its order and focus.
     //
     // A panel the user made an ordinary window (DeckSettings.AlwaysOnTop off) is watched only for show desktop (WatchDesktop).
     private void WatchOrder(IntPtr window) { WatchOrderOnce(window); OrderChecked?.Invoke(); }
@@ -130,7 +137,7 @@ public sealed class WindowsHost : IDisposable
         string? cause = null;
         // The window the cause names, if any; its process is looked up only for the log.
         var culprit = IntPtr.Zero;
-        bool recover = false;
+        bool recover = false, mirrored = false;
         if ((GetWindowLongPtr(window, -20).ToInt64() & 0x8) == 0) { cause = "topmost flag lost"; recover = true; }
         else
         {
@@ -154,7 +161,8 @@ public sealed class WindowsHost : IDisposable
                     else
                     {
                         cause = "covered by topmost"; culprit = above;
-                        recover = _forceTopmost?.Invoke() == true;
+                        mirrored = MirrorsTopmost;
+                        recover = !mirrored && (_forceTopmost?.Invoke() == true || _mirrorTopmost?.Invoke() == true);
                         if (recover && Yield()) { cause = "repeatedly covered by topmost"; recover = false; }
                     }
                     break;
@@ -167,12 +175,36 @@ public sealed class WindowsHost : IDisposable
         // with a new window every moment, or uncover it for a moment between two, so neither the window nor a break in
         // the obstruction makes a note new.
         if (culprit != _namedWindow) { _namedWindow = culprit; _namedProcess = culprit == IntPtr.Zero ? "" : ProcessName(culprit); }
-        var note = "panel " + (_namedProcess.Length == 0 ? cause : cause + " " + _namedProcess) + (recover ? "; topmost restored" : "; left as is");
+        var note = "panel " + (_namedProcess.Length == 0 ? cause : cause + " " + _namedProcess) + (recover ? "; topmost restored" : mirrored ? "; mirrored" : "; left as is");
         var now = Environment.TickCount64;
         if (_orderNotes.TryGetValue(note, out var at) && now - at < 10000) return;
         if (_orderNotes.Count >= 32) foreach (var old in _orderNotes.Where(n => now - n.Value >= 10000).Select(n => n.Key).ToList()) _orderNotes.Remove(old);
         _orderNotes[note] = now;
         NoteOrder($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {note}");
+    }
+    // The part of an area, in screen physical pixels, that other apps' topmost windows above the panel cover where they reach the
+    // island, as one rectangle around every covered part; null when none does or MirrorTopmost is off. Menus over the island are
+    // left above it, as WatchOrder leaves them; the taskbar is not counted, for WatchOrder raises the panel over it.
+    public Rect? TopmostCover(Rect island, Rect area)
+    {
+        var window = _window();
+        if (!MirrorsTopmost || window == IntPtr.Zero || !(island.Width > 0) || !(island.Height > 0)) return null;
+        Rect? cover = null;
+        int walked = 0;
+        for (var above = GetWindow(window, 3); above != IntPtr.Zero && walked < 64; above = GetWindow(above, 3), walked++)
+        {
+            if (!IsWindowVisible(above) || IsIconic(above)) continue;
+            if ((GetWindowLongPtr(above, -20).ToInt64() & 0x8) == 0) continue;
+            if (DwmGetWindowAttribute(above, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) continue;
+            GetWindowThreadProcessId(above, out var pid);
+            if (pid == Environment.ProcessId || !GetWindowRect(above, out var r)) continue;
+            var reach = Rect.Intersect(island, r.ToRect());
+            if (reach.IsEmpty || !(reach.Width >= 1) || !(reach.Height >= 1) || IsTaskbar(above) || IsMenu(above)) continue;
+            var part = Rect.Intersect(area, r.ToRect());
+            if (part.IsEmpty) continue;
+            cover = cover is { } so ? Rect.Union(so, part) : part;
+        }
+        return cover;
     }
     // An ordinary panel. Show desktop puts the desktop above every ordinary window, the panel among them; a click on the
     // desktop leaves it beneath them. Once the desktop has stayed in front for a moment, the panel is made topmost over

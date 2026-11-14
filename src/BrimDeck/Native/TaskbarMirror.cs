@@ -2,8 +2,6 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
 namespace BrimDeck.Native;
@@ -12,44 +10,55 @@ namespace BrimDeck.Native;
 // window lives (topmost ones included), into a higher band of the shell's, and moves it back a second or two after the flyout
 // closes. No ordinary window can follow it there, so a collapsed island over the taskbar is hidden behind it all that while.
 // An ordinary process can still create a window in band 16, the band of explorer's task switcher, which lies above the
-// lifted taskbar. While the taskbar under the island is lifted, the part of the island over the taskbar is drawn into such a
-// window at its own place, a picture redrawn every frame; an open panel shows its part over the taskbar the same way, and
-// nothing is drawn over the flyout above the taskbar. Both band calls are undocumented; where either is missing or refused,
-// the mirror stays off and the island is covered as before.
+// lifted taskbar. While the taskbar under the island is lifted, such a window ("lens") lies over the part of the panel's
+// window that the taskbar covers and shows that part through a DWM thumbnail: the desktop compositor draws the panel's live
+// picture there, at the panel's own frame rate and with its transparency, and the panel draws nothing more. The panel's window
+// keeps its size while it is used (only the island inside it moves), so the lens stays put through animations and resizing,
+// and the resize grips beside the island show in it too. The panel's own pop-ups over that part (menus, tooltips) get a lens
+// of their own above it. The lenses exist only while they are needed. Both band calls are undocumented; where either is
+// missing or refused, no lens is shown and the island is covered as before.
 //
-// The mouse over the mirror reaches the panel: moves are handed on so its hover states follow (Hover), and presses, releases and
-// wheel turns are raised in it at the same place (Pointer), so the island and the open panel's part over the taskbar are
-// hovered, clicked and scrolled as they are themselves. After a flyout closes, the taskbar can stay lifted for a few seconds
-// while the pointer is over it, and the mirror stays with it.
+// The same lenses keep the panel above other apps' topmost windows when the user asks for it (DeckSettings.MirrorTopmost):
+// the part they cover is shown above them, and the panel no longer raises itself over them again and again.
+//
+// The mouse over a lens reaches the window it shows: a clear spot lets the mouse through to what lies beneath (the taskbar);
+// moves are handed on so hover states follow (Hover), and presses, releases and wheel turns are raised in the window at the
+// same place (Pointer). After a flyout closes, the taskbar can stay lifted for a few seconds while the pointer is over it, and
+// the lenses stay with it.
 internal sealed class TaskbarMirror : IDisposable
 {
     private const uint DesktopBand = 1, SwitcherBand = 16;
-    private const int FrameMilliseconds = 33;
     private const string ClassName = "BrimDeckTaskbarMirror";
-    // The island in screen physical pixels, and the same island in the stage's own coordinates.
-    private readonly Func<Rect?> _strip, _region;
+    // The island in screen physical pixels: whether it reaches into a lifted taskbar decides whether a lens is needed.
+    private readonly Func<Rect?> _strip;
     private readonly Func<bool> _wanted;
-    private readonly Func<uint, Point, int, bool> _pointer;
-    private readonly Visual _stage;
-    // Puts the panel back above a taskbar that has come down to band 1, before the mirror leaves.
+    // Puts the panel back above a taskbar that has come down to band 1, before the lenses leave.
     private readonly Action _raise;
-    private readonly DispatcherTimer _frame = new() { Interval = TimeSpan.FromMilliseconds(FrameMilliseconds) };
+    private readonly Func<IntPtr> _panel;
+    // The part of an area other topmost windows cover where they reach the island, when the panel is to stay above them.
+    private readonly Func<Rect, Rect, Rect?> _topmost;
+    // Whether a window of the panel's draws at a place on screen, and the press, release or wheel turn there (window, message,
+    // place on screen in physical pixels, wheel turn); true when handled.
+    private readonly Func<IntPtr, Point, bool> _hit;
+    private readonly Func<IntPtr, uint, Point, int, bool> _pointer;
+    // The lenses' places follow the panel's window and the taskbar; their pictures follow on their own.
+    private readonly DispatcherTimer _frame = new() { Interval = TimeSpan.FromMilliseconds(33) };
     // The taskbar is lifted a moment after the flyout takes the foreground, so a foreground change is followed by a few
     // quick checks; the order watch alone looks only every 400 ms.
     private readonly DispatcherTimer _follow = new() { Interval = TimeSpan.FromMilliseconds(80) };
     private int _followTicks;
-    private IntPtr _window, _memory, _bitmap, _bits;
-    private int _width, _height;
-    private RenderTargetBitmap? _picture;
+    private readonly Lens _panelLens;
+    private readonly Dictionary<IntPtr, Lens> _popupLenses = [];
     private bool _shown, _unavailable;
+    // False once a band call is found missing or refused.
+    public bool Available => !_unavailable;
 
-    // The panel's window.
-    private readonly Func<IntPtr> _panel;
-
-    // pointer: a mouse message over the mirror, its place on screen in physical pixels and a wheel turn; true when handled.
-    public TaskbarMirror(Visual stage, Func<Rect?> strip, Func<Rect?> region, Func<bool> wanted, Action raise, Func<uint, Point, int, bool> pointer, Func<IntPtr> panel)
+    public TaskbarMirror(Func<Rect?> strip, Func<bool> wanted, Action raise, Func<IntPtr> panel, Func<Rect, Rect, Rect?> topmost,
+        Func<IntPtr, Point, bool> hit, Func<IntPtr, uint, Point, int, bool> pointer)
     {
-        _stage = stage; _strip = strip; _region = region; _wanted = wanted; _raise = raise; _pointer = pointer; _panel = panel;
+        _strip = strip; _wanted = wanted; _raise = raise; _panel = panel; _topmost = topmost; _hit = hit; _pointer = pointer;
+        _panelLens = new Lens(this);
+        _collectPopup = (window, _) => { _popups.Add(window); return true; };
         _frame.Tick += (_, _) => Frame();
         _follow.Tick += (_, _) => { Check(); if (_shown || --_followTicks <= 0) _follow.Stop(); };
     }
@@ -58,7 +67,7 @@ internal sealed class TaskbarMirror : IDisposable
     public void Check()
     {
         if (_unavailable) return;
-        if (_wanted() && Covered() is { } part) Show(part);
+        if (_wanted() && Covered() is { } area) Show(area);
         else if (_shown) Hide();
     }
 
@@ -72,36 +81,43 @@ internal sealed class TaskbarMirror : IDisposable
 
     private void Frame()
     {
-        if (_wanted() && Covered() is { } part) { Draw(part); CheckHover(); return; }
+        if (_wanted() && Covered() is { } area) { Show(area); CheckHover(); return; }
         _raise();
         Hide();
     }
 
-    // The part of the island, in screen physical pixels, over a taskbar that is out of band 1; null when there is none.
+    // The part of the panel's window to show above, in screen physical pixels: where a taskbar that is out of band 1 covers it,
+    // when that taskbar reaches the island, and where other topmost windows cover it when the panel is to stay above them
+    // (_topmost, DeckSettings.MirrorTopmost); null when none.
     private Rect? Covered()
     {
-        if (_strip() is not { } strip) return null;
+        if (_strip() is not { } strip || !GetWindowRect(_panel(), out var w)) return null;
+        var window = ToRect(w);
+        Rect? area = _topmost(strip, window);
         try
         {
             foreach (var name in (ReadOnlySpan<string>)["Shell_TrayWnd", "Shell_SecondaryTrayWnd"])
                 for (var bar = FindWindowEx(IntPtr.Zero, IntPtr.Zero, name, null); bar != IntPtr.Zero; bar = FindWindowEx(IntPtr.Zero, bar, name, null))
                 {
                     if (!IsWindowVisible(bar) || !GetWindowRect(bar, out var r)) continue;
-                    var part = Rect.Intersect(strip, new Rect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top));
-                    if (part.IsEmpty || !(part.Width >= 1) || !(part.Height >= 1)) continue;
-                    if (GetWindowBand(bar, out var band) && band != DesktopBand && band != 0) return part;
+                    var taskbar = ToRect(r);
+                    if (!Overlaps(strip, taskbar) || !GetWindowBand(bar, out var band) || band == DesktopBand || band == 0) continue;
+                    var part = Rect.Intersect(window, taskbar);
+                    if (part.IsEmpty) continue;
+                    area = area is { } so ? Rect.Union(so, part) : part;
                 }
         }
-        catch (EntryPointNotFoundException) { _unavailable = true; }
-        return null;
+        catch (EntryPointNotFoundException) { _unavailable = true; return null; }
+        return area;
     }
+    private static bool Overlaps(Rect a, Rect b) { var c = Rect.Intersect(a, b); return !c.IsEmpty && c.Width >= 1 && c.Height >= 1; }
+    private static Rect ToRect(RECT r) => new(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
 
-    private void Show(Rect part)
+    private void Show(Rect area)
     {
+        if (!Place(_panelLens, _panel(), area)) { Hide(); return; }
+        ShowPopups(area);
         if (_shown) return;
-        if (_window == IntPtr.Zero && !Create()) return;
-        if (!Draw(part)) return;
-        ShowWindow(_window, 4); // SW_SHOWNOACTIVATE
         _shown = true;
         _frame.Start();
     }
@@ -109,33 +125,105 @@ internal sealed class TaskbarMirror : IDisposable
     private void Hide()
     {
         _frame.Stop();
-        if (GetCapture() == _window) ReleaseCapture();
+        EndPress();
         CheckHover(end: true);
-        if (!_shown) return;
+        Conceal(_panelLens);
+        foreach (var lens in _popupLenses.Values) Conceal(lens);
+        _popupLenses.Clear();
         _shown = false;
-        ShowWindow(_window, 0); // SW_HIDE
     }
 
-    private bool Create()
+    // The panel's own topmost pop-ups — its menus, tooltips and detail windows — lie above the panel but in band 1, so one that
+    // reaches into the covered part is covered too; it gets a lens of its own, above the panel's.
+    private void ShowPopups(Rect area)
     {
-        try
+        var panel = _panel();
+        _popups.Clear();
+        EnumThreadWindows(GetCurrentThreadId(), _collectPopup, IntPtr.Zero);
+        var seen = new HashSet<IntPtr>();
+        foreach (var popup in _popups)
         {
-            // WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE; WS_POPUP. The mouse passes the clear pixels
-            // of a layered window and stops at the drawn ones.
-            if (Register())
-                _window = CreateWindowInBand(0x08080000 | 0x80 | 0x08, ClassName, "BrimDeck", 0x80000000, 0, 0, 0, 0,
-                    IntPtr.Zero, IntPtr.Zero, GetModuleHandle(IntPtr.Zero), IntPtr.Zero, SwitcherBand);
+            if (popup == panel || Lenses.ContainsKey(popup) || !IsWindowVisible(popup) || (GetWindowLongPtr(popup, -20).ToInt64() & 0x8) == 0) continue;
+            if (!GetWindowRect(popup, out var r) || !Overlaps(area, ToRect(r))) continue;
+            seen.Add(popup);
+            if (!_popupLenses.TryGetValue(popup, out var lens)) _popupLenses[popup] = lens = new Lens(this);
+            Place(lens, popup, ToRect(r), above: true);
         }
-        catch (EntryPointNotFoundException) { }
-        if (_window == IntPtr.Zero) { _unavailable = true; return false; }
-        Mirrors[_window] = this;
-        _memory = CreateCompatibleDC(IntPtr.Zero);
+        foreach (var gone in _popupLenses.Keys.Where(popup => !seen.Contains(popup)).ToList())
+        {
+            Conceal(_popupLenses[gone]);
+            _popupLenses.Remove(gone);
+        }
+    }
+
+    // A band-16 window showing a part of another window of this app through a DWM thumbnail.
+    private sealed class Lens(TaskbarMirror mirror)
+    {
+        public readonly TaskbarMirror Mirror = mirror;
+        public IntPtr Window, Target, Thumbnail;
+        public Rect Area = Rect.Empty;
+    }
+    private static readonly Dictionary<IntPtr, Lens> Lenses = [];
+
+    // Shows the given area of the target window at its own place on screen. above puts the lens over the others.
+    private bool Place(Lens lens, IntPtr target, Rect area, bool above = false)
+    {
+        if (target == IntPtr.Zero || !GetWindowRect(target, out var t)) return false;
+        if (lens.Window == IntPtr.Zero && !Create(lens)) return false;
+        bool fresh = lens.Target != target || lens.Thumbnail == IntPtr.Zero;
+        if (fresh)
+        {
+            if (lens.Thumbnail != IntPtr.Zero) DwmUnregisterThumbnail(lens.Thumbnail);
+            lens.Thumbnail = IntPtr.Zero; lens.Target = target;
+            if (DwmRegisterThumbnail(lens.Window, target, out lens.Thumbnail) != 0) { lens.Thumbnail = IntPtr.Zero; return false; }
+        }
+        int left = (int)Math.Round(area.X), top = (int)Math.Round(area.Y);
+        int width = (int)Math.Round(area.Right) - left, height = (int)Math.Round(area.Bottom) - top;
+        if (width <= 0 || height <= 0) return false;
+        var place = new Rect(left, top, width, height);
+        if (!fresh && place == lens.Area) return true;
+        lens.Area = place;
+        var properties = new DWM_THUMBNAIL_PROPERTIES
+        {
+            Flags = 0x1 | 0x2 | 0x4 | 0x8, // DWM_TNP_RECTDESTINATION | RECTSOURCE | OPACITY | VISIBLE
+            Destination = new RECT { Left = 0, Top = 0, Right = width, Bottom = height },
+            Source = new RECT { Left = left - t.Left, Top = top - t.Top, Right = left - t.Left + width, Bottom = top - t.Top + height },
+            Opacity = 255, Visible = true,
+        };
+        DwmUpdateThumbnailProperties(lens.Thumbnail, ref properties);
+        // SWP_NOACTIVATE | SWP_SHOWWINDOW, and SWP_NOZORDER unless the lens goes on top.
+        SetWindowPos(lens.Window, IntPtr.Zero, left, top, width, height, 0x0010 | 0x0040 | (above && fresh ? 0u : 0x0004));
         return true;
     }
 
-    // One window class for the mirrors of every panel; the procedure finds its mirror by window.
-    private static readonly Dictionary<IntPtr, TaskbarMirror> Mirrors = [];
-    private static readonly WndProc Procedure = MirrorProcedure;
+    private static void Conceal(Lens lens)
+    {
+        if (lens.Window == IntPtr.Zero) return;
+        ShowWindow(lens.Window, 0); // SW_HIDE
+        if (lens.Thumbnail != IntPtr.Zero) DwmUnregisterThumbnail(lens.Thumbnail);
+        lens.Thumbnail = IntPtr.Zero; lens.Target = IntPtr.Zero; lens.Area = Rect.Empty;
+        // A pop-up's lens is not kept: the pop-up is gone or will be another.
+        if (lens != lens.Mirror._panelLens) { Lenses.Remove(lens.Window); DestroyWindow(lens.Window); lens.Window = IntPtr.Zero; }
+    }
+
+    private bool Create(Lens lens)
+    {
+        try
+        {
+            // WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST; WS_POPUP. Without a surface of its own the
+            // lens shows nothing but the thumbnail, so the panel's clear parts stay clear.
+            if (Register())
+                lens.Window = CreateWindowInBand(0x00200000 | 0x08000000 | 0x80 | 0x08, ClassName, "BrimDeck", 0x80000000, 0, 0, 0, 0,
+                    IntPtr.Zero, IntPtr.Zero, GetModuleHandle(IntPtr.Zero), IntPtr.Zero, SwitcherBand);
+        }
+        catch (EntryPointNotFoundException) { }
+        if (lens.Window == IntPtr.Zero) { _unavailable = true; return false; }
+        Lenses[lens.Window] = lens;
+        return true;
+    }
+
+    // One window class for every lens; the procedure finds its lens by window.
+    private static readonly WndProc Procedure = LensProcedure;
     private static bool _registered;
     private static bool Register()
     {
@@ -147,168 +235,144 @@ internal sealed class TaskbarMirror : IDisposable
         };
         return _registered = RegisterClassEx(ref type) != 0;
     }
-    private static IntPtr MirrorProcedure(IntPtr window, uint message, IntPtr wParam, IntPtr lParam)
+    private static IntPtr LensProcedure(IntPtr window, uint message, IntPtr wParam, IntPtr lParam)
     {
-        switch (message)
-        {
-            case 0x0021: return new IntPtr(3); // WM_MOUSEACTIVATE: MA_NOACTIVATE, the click is delivered without taking focus.
-            // WM_SETCURSOR over the drawn island: the pointer keeps the shape the panel gives it.
-            case 0x0020 when ((long)lParam & 0xFFFF) == 1: return new IntPtr(1);
-            case 0x0200 when Mirrors.TryGetValue(window, out var hovered) && hovered.Hover(wParam, lParam): return IntPtr.Zero;
-            case >= 0x0201 and <= 0x020E when Mirrors.TryGetValue(window, out var mirror) && mirror.Pointer(message, wParam, lParam): return IntPtr.Zero;
-        }
+        if (Lenses.TryGetValue(window, out var lens) && lens.Target != IntPtr.Zero)
+            switch (message)
+            {
+                // WM_NCHITTEST: where the window shown draws nothing, the mouse goes on to what lies beneath.
+                case 0x0084:
+                    var at = new Point(unchecked((short)(long)lParam), unchecked((short)((long)lParam >> 16)));
+                    return new IntPtr(lens.Mirror._hit(lens.Target, at) ? 1 : -1); // HTCLIENT, HTTRANSPARENT
+                case 0x0021: return new IntPtr(3); // WM_MOUSEACTIVATE: MA_NOACTIVATE, the click is delivered without taking focus.
+                // WM_SETCURSOR over the window shown: the pointer keeps the shape that window gives it.
+                case 0x0020 when ((long)lParam & 0xFFFF) == 1: return new IntPtr(1);
+                case 0x0200 when lens.Mirror.Hover(lens, wParam, lParam): return IntPtr.Zero;
+                case >= 0x0201 and <= 0x020E when lens.Mirror.Pointer(lens, message, wParam, lParam): return IntPtr.Zero;
+            }
         return DefWindowProc(window, message, wParam, lParam);
     }
 
-    // Passes a press, a release or a wheel turn over the mirror to the panel, with its place on screen in physical pixels; the
-    // panel raises them as its own mouse events at the same place (MainWindow.MirrorPointer). Pressed messages handed to the
-    // panel itself were seen to raise no press in it. While a button is held over the mirror, the mirror holds the capture, so
-    // the release comes back to it.
-    private bool Pointer(uint message, IntPtr wParam, IntPtr lParam)
+    // Passes a press, a release or a wheel turn over a lens to the window it shows, with its place on screen in physical pixels;
+    // that window raises them as its own mouse events at the same place (MainWindow.MirrorPointer). Pressed messages handed to
+    // the window itself were seen to raise no press in it. From a press to its release the lens holds the capture, so the drag
+    // and the release come back to it wherever the pointer goes.
+    private Lens? _pressed;
+    private bool Pointer(Lens lens, uint message, IntPtr wParam, IntPtr lParam)
     {
         var point = new POINT { X = unchecked((short)(long)lParam), Y = unchecked((short)((long)lParam >> 16)) };
         // The wheel messages carry screen coordinates, the others the window's own.
         bool wheel = message is 0x020A or 0x020E;
-        if (!wheel) ClientToScreen(_window, ref point);
+        if (!wheel) ClientToScreen(lens.Window, ref point);
         int delta = wheel ? unchecked((short)((long)wParam >> 16)) : 0;
-        bool handled = _pointer(message, new Point(point.X, point.Y), delta);
-        // After the panel has acted on it: a control that takes the capture on a press would otherwise keep the release from
-        // the mirror.
-        if (message is 0x0201 or 0x0204 or 0x0207) SetCapture(_window);       // WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN
-        else if (message is 0x0202 or 0x0205 or 0x0208 && GetCapture() == _window) ReleaseCapture();
+        var target = _pressed?.Target ?? lens.Target;
+        bool handled = _pointer(target, message, new Point(point.X, point.Y), delta);
+        // After the window has acted on it: a control that takes the capture on a press would otherwise keep the drag and the
+        // release from the lens.
+        if (message is 0x0201 or 0x0204 or 0x0207) { _pressed ??= lens; SetCapture(_pressed.Window); } // WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN
+        else if (message is 0x0202 or 0x0205 or 0x0208) EndPress();
         return handled;
     }
+    private void EndPress()
+    {
+        if (_pressed is { } lens && GetCapture() == lens.Window) ReleaseCapture();
+        _pressed = null;
+    }
 
-    // The pointer's moves over the mirror are handed to the panel as mouse moves at the same place, so the panel's hover states
-    // (a row's highlight, a button's) follow the pointer there.
+    // The pointer's moves over a lens are handed to the window it shows as mouse moves at the same place, so its hover states
+    // (a row's highlight, a button's) and a drag follow the pointer there.
     //
     // WPF drops mouse input as spurious while its window is inactive and the pointer is over another window, unless the window
-    // holds the mouse capture, so the panel holds it for the move. Once active, WPF would go inactive again on the capture going
-    // back and on the leave its own mouse tracking reports (the pointer is not over its window), so the panel's hook keeps both
-    // from it while the pointer is over the mirror (PanelMessages); a capture held between moves would keep the pointer's own
-    // clicks from the mirror, for a window not in the foreground gets the mouse only where it can be seen.
-    private bool _hooked, _hovering, _forwarding;
+    // holds the mouse capture, so the window holds it for the move. Once active, WPF would go inactive again on the capture going
+    // back and on the leave its own mouse tracking reports (the pointer is not over its window), so the window's hook keeps both
+    // from it while the pointer is over a lens (TargetMessages); a capture held between moves would keep the pointer's own
+    // clicks from the lens, for a window not in the foreground gets the mouse only where it can be seen. During a press the lens
+    // takes the capture back after each move.
+    private bool _hovering, _forwarding, _inputHooked;
+    private IntPtr _hovered;
+    private readonly HashSet<IntPtr> _hooked = [];
     private IntPtr _lastMove = new(-1), _lastKeys = new(-1);
-    private bool Hover(IntPtr wParam, IntPtr lParam)
+    private bool Hover(Lens lens, IntPtr wParam, IntPtr lParam)
     {
-        var panel = _panel();
-        if (panel == IntPtr.Zero) return false;
-        if (!_hooked && HwndSource.FromHwnd(panel) is { } source)
-        {
-            source.AddHook(PanelMessages);
-            InputManager.Current.PreProcessInput += KeepForwarded;
-            _hooked = true;
-        }
+        var target = _pressed?.Target ?? lens.Target;
+        if (!_hooked.Contains(target) && HwndSource.FromHwnd(target) is { } source) { source.AddHook(TargetMessages); _hooked.Add(target); }
+        if (!_inputHooked) { InputManager.Current.PreProcessInput += KeepForwarded; _inputHooked = true; }
         // Giving and taking back the capture makes Windows send the window under the pointer a move of its own; a move to the
         // same place with the same buttons is not handed on again.
         if (_hovering && lParam == _lastMove && wParam == _lastKeys) return true;
         _lastMove = lParam; _lastKeys = wParam;
-        _hovering = true;
+        if (_hovering && _hovered != target) Leave(_hovered);
+        _hovering = true; _hovered = target;
         var point = new POINT { X = unchecked((short)(long)lParam), Y = unchecked((short)((long)lParam >> 16)) };
-        ClientToScreen(_window, ref point);
-        ScreenToClient(panel, ref point);
-        bool own = GetCapture() == panel;
-        if (!own) SetCapture(panel);
+        ClientToScreen(lens.Window, ref point);
+        ScreenToClient(target, ref point);
+        bool own = GetCapture() == target;
+        if (!own) SetCapture(target);
         _forwarding = true;
-        try { SendMessage(panel, 0x0200, wParam, new IntPtr((point.Y << 16) | (point.X & 0xFFFF))); }
+        try { SendMessage(target, 0x0200, wParam, new IntPtr((point.Y << 16) | (point.X & 0xFFFF))); }
         finally { _forwarding = false; }
-        if (!own && GetCapture() == panel) ReleaseCapture();
+        if (_pressed is { } pressed) SetCapture(pressed.Window);
+        else if (!own && GetCapture() == target) ReleaseCapture();
         return true;
     }
-    // While the pointer is over the mirror, the panel takes no mouse input but the moves handed on. WPF looks again at what is
-    // under the pointer after a layout (a "synchronize"), asks Windows which window is there, finds the mirror's, and put the
-    // pointer over nothing in the panel: the panel redraws its readings all the time, and a hover highlight did not stay.
+    // While the pointer is over a lens, the panel's windows take no mouse input but the moves handed on. WPF looks again at what is
+    // under the pointer after a layout (a "synchronize"), asks Windows which window is there, finds the lens, and put the pointer
+    // over nothing: the panel redraws its readings all the time, and a hover highlight did not stay.
     private void KeepForwarded(object sender, PreProcessInputEventArgs e)
     {
         // The raw report's type is internal to WPF and is known by name; under another name nothing is held back.
         var input = e.StagingItem.Input;
         if (_hovering && !_forwarding && input.Device is MouseDevice && input.GetType().Name == "InputReportEventArgs") e.Cancel();
     }
-    private IntPtr PanelMessages(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    private IntPtr TargetMessages(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (_hovering && message is 0x02A3 or 0x0215) handled = true; // WM_MOUSELEAVE, WM_CAPTURECHANGED
         return IntPtr.Zero;
     }
-    // Each frame, and when the mirror leaves: once the pointer has left the mirror, the panel gets the pointer as usual again.
-    // Over the panel itself, its mouse tracking is started again so that it learns when the pointer leaves; elsewhere it is told
-    // the pointer has left.
+    // Each frame, and when the lenses leave: once the pointer has left the lenses with no button held, the window it was over
+    // gets the pointer as usual again.
     private void CheckHover(bool end = false)
     {
         if (!_hovering) return;
         GetCursorPos(out var cursor);
-        if (!end && WindowFromPoint(cursor) == _window) return;
+        if (!end && (_pressed is not null || Lenses.ContainsKey(WindowFromPoint(cursor)))) return;
         _hovering = false;
         _lastMove = _lastKeys = new IntPtr(-1);
-        var panel = _panel();
-        if (WindowFromPoint(cursor) == panel)
+        Leave(_hovered);
+        _hovered = IntPtr.Zero;
+    }
+    // Over the window itself, its mouse tracking is started again so that it learns when the pointer leaves; elsewhere it is
+    // told the pointer has left.
+    private static void Leave(IntPtr window)
+    {
+        if (window == IntPtr.Zero) return;
+        GetCursorPos(out var cursor);
+        if (WindowFromPoint(cursor) == window)
         {
-            var track = new TRACKMOUSEEVENT { Size = Marshal.SizeOf<TRACKMOUSEEVENT>(), Flags = 2, Window = panel }; // TME_LEAVE
+            var track = new TRACKMOUSEEVENT { Size = Marshal.SizeOf<TRACKMOUSEEVENT>(), Flags = 2, Window = window }; // TME_LEAVE
             TrackMouseEvent(ref track);
         }
-        else SendMessage(panel, 0x02A3, IntPtr.Zero, IntPtr.Zero); // WM_MOUSELEAVE
-    }
-
-    // Draws the given part of the island as it is now into the mirror, at that part's place on screen. The island's place on
-    // screen and in the stage's parent are both upright (the edge's turn is inside the stage), so the part maps across by scale.
-    private bool Draw(Rect part)
-    {
-        if (_strip() is not { } strip || _region() is not { } island || !(island.Width > 0) || !(island.Height > 0) || !(strip.Width > 0) || !(strip.Height > 0)) return false;
-        double scaleX = island.Width / strip.Width, scaleY = island.Height / strip.Height;
-        int left = (int)Math.Round(part.X), top = (int)Math.Round(part.Y);
-        int width = (int)Math.Round(part.Right) - left, height = (int)Math.Round(part.Bottom) - top;
-        if (width <= 0 || height <= 0) return false;
-        var region = new Rect(island.X + (left - strip.X) * scaleX, island.Y + (top - strip.Y) * scaleY, width * scaleX, height * scaleY);
-        double dpiX = 96.0 * width / region.Width, dpiY = 96.0 * height / region.Height;
-        if (_picture is null || _picture.PixelWidth != width || _picture.PixelHeight != height
-            || Math.Abs(_picture.DpiX - dpiX) > 0.01 || Math.Abs(_picture.DpiY - dpiY) > 0.01)
-            _picture = new RenderTargetBitmap(width, height, dpiX, dpiY, PixelFormats.Pbgra32);
-        if ((width != _width || height != _height) && !Allocate(width, height)) return false;
-        var drawing = new DrawingVisual();
-        using (var context = drawing.RenderOpen())
-            context.DrawRectangle(new VisualBrush(_stage) { ViewboxUnits = BrushMappingMode.Absolute, Viewbox = region, Stretch = Stretch.Fill },
-                null, new Rect(0, 0, region.Width, region.Height));
-        _picture.Clear();
-        _picture.Render(drawing);
-        // Pbgra32 is the premultiplied BGRA a layered window takes.
-        _picture.CopyPixels(new Int32Rect(0, 0, width, height), _bits, width * height * 4, width * 4);
-        var place = new POINT { X = left, Y = top };
-        var size = new SIZE { Width = width, Height = height };
-        var origin = new POINT();
-        var blend = new BLENDFUNCTION { SourceConstantAlpha = 255, AlphaFormat = 1 }; // AC_SRC_OVER, AC_SRC_ALPHA
-        return UpdateLayeredWindow(_window, IntPtr.Zero, ref place, ref size, _memory, ref origin, 0, ref blend, 2); // ULW_ALPHA
-    }
-
-    private bool Allocate(int width, int height)
-    {
-        var header = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = width, Height = -height, Planes = 1, BitCount = 32 };
-        var bitmap = CreateDIBSection(_memory, ref header, 0, out var bits, IntPtr.Zero, 0);
-        if (bitmap == IntPtr.Zero) return false;
-        SelectObject(_memory, bitmap);
-        if (_bitmap != IntPtr.Zero) DeleteObject(_bitmap);
-        _bitmap = bitmap; _bits = bits; _width = width; _height = height;
-        return true;
+        else SendMessage(window, 0x02A3, IntPtr.Zero, IntPtr.Zero); // WM_MOUSELEAVE
     }
 
     public void Dispose()
     {
         _frame.Stop(); _follow.Stop();
-        if (GetCapture() == _window) ReleaseCapture();
-        if (_hooked) InputManager.Current.PreProcessInput -= KeepForwarded;
-        if (_window != IntPtr.Zero) { Mirrors.Remove(_window); DestroyWindow(_window); }
-        if (_memory != IntPtr.Zero) DeleteDC(_memory);
-        if (_bitmap != IntPtr.Zero) DeleteObject(_bitmap);
-        _window = _memory = _bitmap = IntPtr.Zero;
+        Hide();
+        if (_inputHooked) InputManager.Current.PreProcessInput -= KeepForwarded;
+        if (_panelLens.Window != IntPtr.Zero) { Lenses.Remove(_panelLens.Window); DestroyWindow(_panelLens.Window); _panelLens.Window = IntPtr.Zero; }
     }
 
+    private readonly List<IntPtr> _popups = [];
+    private readonly EnumWindowsProc _collectPopup;
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
     [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
-    [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int Width, Height; }
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
     [StructLayout(LayoutKind.Sequential)]
-    private struct BITMAPINFOHEADER
+    private struct DWM_THUMBNAIL_PROPERTIES
     {
-        public int Size, Width, Height; public short Planes, BitCount;
-        public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant;
+        public uint Flags; public RECT Destination, Source; public byte Opacity;
+        [MarshalAs(UnmanagedType.Bool)] public bool Visible; [MarshalAs(UnmanagedType.Bool)] public bool SourceClientAreaOnly;
     }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WNDCLASSEX
@@ -316,10 +380,27 @@ internal sealed class TaskbarMirror : IDisposable
         public int Size; public uint Style; public IntPtr Procedure; public int ClassExtra, WindowExtra;
         public IntPtr Instance, Icon, Cursor, Background; public string? MenuName; public string ClassName; public IntPtr SmallIcon;
     }
+    [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public int Size; public uint Flags; public IntPtr Window; public uint HoverTime; }
     private delegate IntPtr WndProc(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("dwmapi")] private static extern int DwmRegisterThumbnail(IntPtr destination, IntPtr source, out IntPtr thumbnail);
+    [DllImport("dwmapi")] private static extern int DwmUpdateThumbnailProperties(IntPtr thumbnail, ref DWM_THUMBNAIL_PROPERTIES properties);
+    [DllImport("dwmapi")] private static extern int DwmUnregisterThumbnail(IntPtr thumbnail);
     [DllImport("user32", CharSet = CharSet.Unicode, EntryPoint = "RegisterClassExW")] private static extern ushort RegisterClassEx(ref WNDCLASSEX type);
     [DllImport("user32", EntryPoint = "DefWindowProcW")] private static extern IntPtr DefWindowProc(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32", EntryPoint = "LoadCursorW")] private static extern IntPtr LoadCursor(IntPtr instance, IntPtr name);
+    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowInBand(uint exStyle, string className, string title, uint style,
+        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter, uint band);
+    [DllImport("user32")] private static extern bool GetWindowBand(IntPtr window, out uint band);
+    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string? title);
+    [DllImport("user32")] private static extern bool EnumThreadWindows(uint thread, EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("kernel32")] private static extern uint GetCurrentThreadId();
+    [DllImport("kernel32", EntryPoint = "GetModuleHandleW")] private static extern IntPtr GetModuleHandle(IntPtr name);
+    [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+    [DllImport("user32")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
+    [DllImport("user32")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32")] private static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32")] private static extern bool DestroyWindow(IntPtr window);
     [DllImport("user32")] private static extern IntPtr SetCapture(IntPtr window);
     [DllImport("user32")] private static extern IntPtr GetCapture();
     [DllImport("user32")] private static extern bool ReleaseCapture();
@@ -328,22 +409,5 @@ internal sealed class TaskbarMirror : IDisposable
     [DllImport("user32")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32", EntryPoint = "SendMessageW")] private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-    [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public int Size; public uint Flags; public IntPtr Window; public uint HoverTime; }
     [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT track);
-    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowInBand(uint exStyle, string className, string title, uint style,
-        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter, uint band);
-    [DllImport("user32")] private static extern bool GetWindowBand(IntPtr window, out uint band);
-    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string? title);
-    [DllImport("user32")] private static extern bool IsWindowVisible(IntPtr window);
-    [DllImport("user32")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
-    [DllImport("user32")] private static extern bool ShowWindow(IntPtr window, int command);
-    [DllImport("user32")] private static extern bool DestroyWindow(IntPtr window);
-    [DllImport("user32")] private static extern bool UpdateLayeredWindow(IntPtr window, IntPtr screen, ref POINT place, ref SIZE size, IntPtr source,
-        ref POINT origin, uint key, ref BLENDFUNCTION blend, uint flags);
-    [DllImport("kernel32", EntryPoint = "GetModuleHandleW")] private static extern IntPtr GetModuleHandle(IntPtr name);
-    [DllImport("gdi32")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
-    [DllImport("gdi32")] private static extern bool DeleteDC(IntPtr dc);
-    [DllImport("gdi32")] private static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER header, uint usage, out IntPtr bits, IntPtr section, uint offset);
-    [DllImport("gdi32")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr item);
-    [DllImport("gdi32")] private static extern bool DeleteObject(IntPtr item);
 }
