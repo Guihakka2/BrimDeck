@@ -46,9 +46,9 @@ static class BrandsControllerTests
             && vader5 is { Family.Brand: "Flydigi" } && vader5.Value.Ways[0].Request.SequenceEqual(new byte[] { 0x00, 0x5A, 0xA5, 0x01, 0x02, 0x00 })
             && BrandFamilies.Find(Shape(0x37D7, 0x2502, 0xFFA0, 1, input: 33, outputIds: [0x00])) is { Family.Brand: "Flydigi" });
         // HaloBattery #191's diagnostics: VID=37d7 PID=6001 if=0 usage=ffa0:0001 'flydigi' 'Flydigi CD2'.
-        check("Flydigi: not the CD2 charging dock on the same page, nor another 37D7 product",
+        check("Flydigi: every pad of the brand on its vendor collection (a later model too), never the CD2 charging dock on the same page",
             BrandFamilies.Find(Shape(0x37D7, 0x6001, 0xFFA0, 1, 0, 65, 65, [0x00])) is null
-            && BrandFamilies.Find(Shape(0x37D7, 0x2BAD, 0xFFA0, 1, input: 33, outputIds: [0x00])) is null);
+            && BrandFamilies.Find(Shape(0x37D7, 0x2601, 0xFFA0, 1, 1, 33, 33, [0x00])) is { Family.Brand: "Flydigi", Ways.Count: 1 });
         check("Flydigi: not its gamepad, another usage, a short collection or another vendor (Cypress 04B4 is the old chip)",
             BrandFamilies.Find(Shape(0x37D7, 0x2401, 0x01, 5, outputIds: [0x00])) is null && BrandFamilies.Find(Shape(0x37D7, 0x2401, 0xFFA0, 2, outputIds: [0x00])) is null
             && BrandFamilies.Find(Shape(0x37D7, 0x2401, 0xFFA0, 1, input: 16, outputIds: [0x00])) is null

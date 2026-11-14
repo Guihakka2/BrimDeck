@@ -1,9 +1,9 @@
 namespace BrimDeck.Core;
 
-// Flydigi (飞智) controllers on their dongles and cables, vendor 0x37D7, only the pads SDL's driver speaks this protocol to
-// (SDL_hidapi.c, usb_ids.h): Vader 5 Pro 2401, Apex 5 2501, Apex 6 2502. Flydigi's other products on 0x37D7 mean other things
-// by the same frame: the CD2 charging dock (37D7:6001, usage page 0xFFA0 usage 1 as well, no report ids) answers command 1 with
-// its own heartbeat, whose bytes would be read as a pad's battery (OpenFlydigi's PROTOCOL.md, CC0), so it is never sent to.
+// Flydigi (飞智) controllers on their dongles and cables, vendor 0x37D7 (Flydigi's own): every pad on the vendor collection
+// below, not a list of models (SDL's driver names the Vader 5 Pro 2401, Apex 5 2501 and Apex 6 2502; later pads on the same
+// protocol are read too). Not the CD2 charging dock (37D7:6001, usage page 0xFFA0 usage 1 as well, no report ids): it answers
+// command 1 with its own heartbeat, whose bytes would be read as a pad's battery (OpenFlydigi's PROTOCOL.md, CC0).
 // The pad keeps its own protocol
 // on the vendor collection usage page 0xFFA0, usage 1 (measured on Windows in HaloBattery #191: the Vader 5 Pro's interface 1;
 // 0xA0FF is taken too, in case Windows reports the page byte-swapped). The read is the device info request 5A A5 01 02 00,
@@ -24,9 +24,11 @@ public static class Flydigi
     private static readonly byte[] Info = [0x5A, 0xA5, 0x01, 0x02, 0x00];
     private static readonly HashSet<int> Apex6Ids = [149, 150, 152];
 
-    public static readonly int[] Pads = [0x2401, 0x2501, Apex6];
+    // Flydigi's products on 0x37D7 that are not pads.
+    public static readonly int[] NotPads = [0x6001];
+    public static bool Pad(int product) => !NotPads.Contains(product);
 
-    public static bool Collection(HidShape shape) => shape.Vendor == Vendor && Pads.Contains(shape.Product) && shape.UsagePage is 0xFFA0 or 0xA0FF
+    public static bool Collection(HidShape shape) => shape.Vendor == Vendor && Pad(shape.Product) && shape.UsagePage is 0xFFA0 or 0xA0FF
         && shape.Usage == 0x0001 && shape.InputLength >= 32;
 
     // The request as the collection takes it: report 0x03 where it declares that id, else unnumbered.
@@ -55,7 +57,7 @@ public static class Flydigi
         => remaining == 1000 && full == 1000 && (vendor == Vendor || vendor == MicrosoftVendor && product == Xbox360Product
             && hidName is { } text && (text.Contains("flydigi", StringComparison.OrdinalIgnoreCase) || text.Contains("vader", StringComparison.OrdinalIgnoreCase)));
     // A pad this family reads over HID: its Windows.Gaming.Input entry would list it a second time.
-    public static bool ReadOverHid(int vendor, int product) => vendor == Vendor && Pads.Contains(product);
+    public static bool ReadOverHid(int vendor, int product) => vendor == Vendor && Pad(product);
 
     public static IEnumerable<BrandFamily> Families =>
     [
