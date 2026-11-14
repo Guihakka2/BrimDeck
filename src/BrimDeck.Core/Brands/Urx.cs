@@ -1,9 +1,10 @@
 namespace BrimDeck.Core;
 
-// The URX Core75 on its 2.4 GHz receiver, 36B0:3002 ("URX Core75 Wireless"). That receiver id is not URX's alone: PMO's
-// keyboards (WAVE 75, Aurora80, P75, PMO80) and a gamepad dongle ship with it as well, and VIA's custom values mean what each
-// firmware makes them mean. So only the pair whose product string names URX is asked, and only on the keyboard's VIA raw HID
-// collection (usage page 0xFF60, usage 0x61, interface 1, 33-byte reports with report id 0). The read is URX HUB's: VIA's
+// The URX Core75 on its 2.4 GHz receiver, 36B0:3002 ("URX Core75 Wireless", measured in HaloBattery #245). That receiver id is
+// not URX's alone: mousedock (MIT) reads PMO's keyboards (WAVE 75, Aurora 80, P75, PMO80) behind 36B0:3002 with a protocol of
+// their own, and VIA's custom values mean what each firmware makes them mean. So only the pair whose product string names URX
+// is asked, and only on the keyboard's VIA raw HID collection (usage page 0xFF60, usage 0x61, interface 1, 33-byte reports
+// with report id 0, as #245's probe listed and wrote them). The read is URX HUB's: VIA's
 // custom get (0x08) on channel 0, value 7; the answer echoes 08 00 07 and gives the percent next. No charging state is sent.
 // A firmware that does not know the command answers FF ..., and the request read back has a zero level: neither is a reading.
 // From HaloBattery's urx.py (MIT; checked against URX HUB on the keyboard: 76 %).

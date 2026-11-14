@@ -13,7 +13,9 @@ namespace BrimDeck.Core;
 //   interface number moved. vigil-watt (MIT; GANSS capture 97 %, F108 Pro checked on the keyboard), aula-keyboard-battery-tray
 //   and Aula-F75-Max-Driver (MIT; the same query and answer for the F75 Max).
 // - EWEADN X87 on 0C45:FEFE, Sonix's id: EWEADN's driver takes only interface 3 (its interface 4 is the same page with 65-byte
-//   reports and must not be written). vigil-watt (MIT; from the driver, measured at 100 %).
+//   reports and must not be written). vigil-watt (MIT; from the driver, measured at 100 %). The AULA F87 Pro V2D's receiver
+//   carries 0C45:FEFE as well (aula-keyboard-battery-tray, MIT), so the receiver's own product string names the keyboard,
+//   not "EWEADN X87".
 [BrandFamilies]
 public static class SonixQuery
 {
@@ -55,6 +57,6 @@ public static class SonixQuery
         new("AULA / GANSS", TakesBorrowed, _ => Ways("sonix"))
         { Kind = _ => DeviceKind.Keyboard, Prefix = "sonix", DisplayName = shape => Named(shape.Name) },
         new("EWEADN", TakesEweadn, _ => Ways("eweadn"))
-        { Kind = _ => DeviceKind.Keyboard, Prefix = "eweadn", DisplayName = _ => "EWEADN X87" },
+        { Kind = _ => DeviceKind.Keyboard, Prefix = "eweadn" },
     ];
 }

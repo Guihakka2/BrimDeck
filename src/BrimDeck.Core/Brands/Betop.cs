@@ -7,9 +7,9 @@ namespace BrimDeck.Core;
 // reports it as 0x00FF (both sources measured that), so either is taken. It takes output report 0x02 with command 0x15, zeros
 // after (the report's own length); the answer is input report 02 15 <percent> 00 <state>, the state 0x50 on battery and 0x51
 // charging (its low nibble set while charging). A state whose high nibble is not 5 is no answer (the request read back is
-// 02 15 00 00 00). From oitsukiii/betop-battery (MIT; Kunpeng 20, checked against BETOP's own client on Windows 11) and
-// HaloBattery's beitong.py (MIT; KP40D, from a capture of the official client). Command 0x22 writes the settings and is never
-// sent.
+// 02 15 00 00 00), and neither is a level of 0 (vigil-watt's BETOP notes, MIT: the receiver's placeholder while not ready).
+// From oitsukiii/betop-battery (MIT; Kunpeng 20, checked against BETOP's own client on Windows 11) and HaloBattery's
+// beitong.py (MIT; KP40D, from a capture of the official client). Command 0x22 writes the settings and is never sent.
 [BrandFamilies]
 public static class Betop
 {
@@ -17,7 +17,7 @@ public static class Betop
 
     public static byte[] Request() => BrandFamilies.Frame(2, 0x02, 0x15);
     public static BatteryRead? Battery(byte[] r)
-        => r.Length >= 5 && r[0] == 0x02 && r[1] == 0x15 && r[3] == 0x00 && (r[4] & 0xF0) == 0x50 && r[2] <= 100 ? new(r[2], (r[4] & 0x0F) != 0) : null;
+        => r.Length >= 5 && r[0] == 0x02 && r[1] == 0x15 && r[3] == 0x00 && (r[4] & 0xF0) == 0x50 && r[2] is > 0 and <= 100 ? new(r[2], (r[4] & 0x0F) != 0) : null;
 
     public static IEnumerable<BrandFamily> Families =>
     [
