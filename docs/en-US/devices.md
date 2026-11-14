@@ -8,7 +8,7 @@ BrimDeck only reads batteries: it never pairs, disconnects or changes any device
 
 | Connection | How it is read | Notes |
 | --- | --- | --- |
-| Bluetooth | The battery Windows itself reads, as Windows Settings › Bluetooth & devices shows it; a Bluetooth LE device's own battery service is read as well | Only connected devices are listed. A device Windows has no battery for shows "No battery reported" |
+| Bluetooth | The battery Windows itself reads, as Windows Settings › Bluetooth & devices shows it; a Bluetooth LE device's own battery service is read as well | Only connected devices are listed. A mouse, keyboard, headset or other peripheral Windows has no battery for shows "No battery reported"; phones, computers and other devices show only when they report a battery |
 | AirPods, Beats | The Bluetooth advertisement the earbuds send while out of the case or with its lid open | Shows each bud and the case. Read only while the earbuds are connected and next to the PC |
 | 2.4 GHz receiver or cable | Each brand's own protocol | Only known models of the brands listed below |
 | Game controllers | Windows' game controller interface; PlayStation controllers through their input reports | Xbox controllers (Xbox Wireless Adapter or cable), PlayStation controllers, and others Windows gives a battery for |
