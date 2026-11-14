@@ -200,6 +200,9 @@ BrimDeck 平时位于屏幕顶部中央，提供刘海（默认）、胶囊和�
 **我的鼠标、键盘或耳机没有显示电量？**
 设备需要处于连接状态，并且属于[设备电量支持](docs/zh-CN/devices.md)中列出的连接方式或型号。没有列出的设备，欢迎在 [Issues](https://github.com/MoFeng2223/BrimDeck/issues) 中反馈型号。
 
+**动画或律动条一直没有效果？**
+BrimDeck 的动画与律动条需要同时打开两个设置：BrimDeck 的“设置 › 常规 › 悬停与动画 › 启用展开与收起动画”，以及 Windows 的“设置 › 辅助功能 › 视觉效果 › 动画效果”。任意一个关闭，展开动画、律动条与文字滚动都会停止。
+
 ## 参与开发
 
 欢迎通过 [Issues](https://github.com/MoFeng2223/BrimDeck/issues) 反馈问题、提出功能建议，或申请适配更多工具、播放器与设备，也欢迎提交 Pull Request 参与开发。
