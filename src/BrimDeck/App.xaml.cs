@@ -104,7 +104,7 @@ public partial class App : Application
         SensorGuard.Start(folder);
         // So is a first try of a device's read that the last run ended in (DeviceReadStore), with the reads kept for each device.
         DeviceReadStore.Start(folder);
-        DeviceReadSwitches.Use(DeviceLists.ReadOff(Settings.DeviceChoices));
+        DeviceReadSwitches.Use(Settings.DeviceChoices);
         UseLanguage(); UseFont();
         PanelTheme.Use(Settings);
         ScheduleDaylight();
@@ -241,8 +241,13 @@ public partial class App : Application
         settings.Normalize();
         // A device's reading turned on again may be tried afresh, what went wrong on it forgotten (DeviceReadBook.Resume).
         var readOff = DeviceLists.ReadOff(settings.DeviceChoices).ToList();
-        foreach (var device in DeviceReadSwitches.Off.Except(readOff, StringComparer.OrdinalIgnoreCase)) DeviceReadStore.Book.Resume(device);
-        DeviceReadSwitches.Use(readOff);
+        var resumed = DeviceReadSwitches.Off.Except(readOff, StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var device in resumed) DeviceReadStore.Book.Resume(device);
+        bool switched = !DeviceReadSwitches.Off.SetEquals(readOff);
+        DeviceReadSwitches.Use(settings.DeviceChoices);
+        if (switched) Devices?.Refresh();
+        // Kept now, off the UI thread: the worker may not run again before the app ends (the page closed).
+        if (resumed.Count > 0 || DeviceReadStore.Book.Dirty) ThreadPool.QueueUserWorkItem(_ => DeviceReadStore.Save());
         Settings = settings;
         if (memoryChanged) ApplyMemoryMode();
         // A monitor page switched on in the smooth mode has its counters set up ahead, as at start.
@@ -570,7 +575,7 @@ public partial class App : Application
     {
         Exiting = true; Lifetime.Cancel(); _save.Stop(); _trim?.Stop(); _release?.Stop(); FinishWriting(); StopBackgroundUpdates(); DisplayPower.Uninstall(); Microsoft.Win32.SystemEvents.UserPreferenceChanged -= SystemThemeChanged; _tray?.Dispose(); DisposeHotkeys(); WindowDrags?.Dispose(); _listener?.Unregister(null); _settingsEvent?.Dispose();
         if (Shelf is not null) { Shelf.Exit(); Shelf.Dispose(); }
-        Media?.Dispose(); _restingMedia?.Dispose(); Monitor?.Dispose(); SensorGuard.Finish(); Devices?.Dispose(); Lyrics?.Dispose(); Prices?.Dispose(); _mutex?.Dispose(); base.OnExit(e);
+        Media?.Dispose(); _restingMedia?.Dispose(); Monitor?.Dispose(); SensorGuard.Finish(); Devices?.Dispose(); DeviceReadStore.Finish(); Lyrics?.Dispose(); Prices?.Dispose(); _mutex?.Dispose(); base.OnExit(e);
     }
     [DllImport("shell32", CharSet = CharSet.Unicode)] private static extern int SetCurrentProcessExplicitAppUserModelID(string id);
 }

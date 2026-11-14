@@ -491,15 +491,15 @@ public static class Dongles
     // answered as an input report on the receiver's 0xFF01 / usage 0 collection, under header 0x09 (or 0x08). From HaloBattery
     // (MIT): irocks.py (iRocks M31R, measured on both ids in #309; its receiver answers from a cache while the mouse is off,
     // so command 0x03 is asked first and only 1 at 6 is the mouse online), dareu.py (DAREU A950 on 260D:1074 measured, 1084
-    // from MousePower) and endgame_we.py (Endgame Gear XM2we 3367:1961, okms/xm2we-linux's protocol). Status: the reply's 2
-    // is 0 for data (1 an empty acknowledgement), its 3 and 4 zero and its 5 the data length 1 to 10, as the DAREU and
-    // Endgame sources check; iRocks's source does not check them, so they are not asked of it.
-    public sealed record CompxSplitModel(int Vendor, int Product, string Name, bool Online, bool Status, int Receiver = -1);
+    // from MousePower) and endgame_we.py (Endgame Gear XM2we 3367:1961, okms/xm2we-linux's protocol). Data: the reply's 2
+    // is 0 for data (1 an empty acknowledgement), as the DAREU and Endgame sources check; Status: also its 3 and 4 zero and its
+    // 5 the data length 1 to 10, which the Endgame source alone checks. iRocks's source checks neither, so neither is asked of it.
+    public sealed record CompxSplitModel(int Vendor, int Product, string Name, bool Online, bool Status, int Receiver = -1, bool Data = false);
     public static readonly IReadOnlyList<CompxSplitModel> CompxSplit =
     [
         new(0x14A5, 0xC009, "iRocks M31R", Online: true, Status: false), new(0x14A5, 0xC010, "iRocks M31R", Online: false, Status: false, Receiver: 0xC009),
-        new(0x260D, 0x1074, "DAREU A950", Online: false, Status: true), new(0x260D, 0x1084, "DAREU", Online: false, Status: true),
-        new(EndgameVendor, 0x1961, "Endgame Gear XM2we", Online: false, Status: true),
+        new(0x260D, 0x1074, "DAREU A950", Online: false, Status: false, Data: true), new(0x260D, 0x1084, "DAREU", Online: false, Status: false, Data: true),
+        new(EndgameVendor, 0x1961, "Endgame Gear XM2we", Online: false, Status: true, Data: true),
     ];
     public static CompxSplitModel? CompxSplitFind(int vendor, int product) => CompxSplit.FirstOrDefault(model => model.Vendor == vendor && model.Product == product);
     public static bool CompxSplitCommand(int usagePage, int usage, int featureLength) => UsagePages.Is(usagePage, 0xFF02) && usage == 0x0002 && featureLength >= 17;
@@ -515,7 +515,7 @@ public static class Dongles
     public static BatteryRead? CompxSplitBattery(CompxSplitModel model, byte[] r)
     {
         if (!CompxSplitFrame(r, 0x04) || r[6] > 100) return null;
-        if (model.Status && (r[2] != 0 || r[3] != 0 || r[4] != 0 || r[5] is < 1 or > 10)) return null;
+        if (model.Data && r[2] != 0 || model.Status && (r[3] != 0 || r[4] != 0 || r[5] is < 1 or > 10)) return null;
         return new(r[6], r[7] != 0);
     }
     // The answer to 0x03: whether the mouse is online; null for another report.
@@ -855,9 +855,18 @@ public static class Dongles
         foreach (var (receiver, cable) in SteelSeriesMice.Pairs) Pair(Headsets.SteelSeries, receiver, cable);
         return [.. twins.Distinct()];
     }
+    // A dongle and the same headset on its cable that both answer while both are plugged in: the dongle's entry is left out
+    // whenever the cable read the headset, asleep or not (the Audeze Maxwell's dongles and its cable, which HaloBattery's
+    // audeze.py merges the same way, the cable winning).
+    public static readonly (string Receiver, string Cable)[] CableWins =
+    [
+        (Devices.Hardware(AirohaRace.Audeze, AirohaRace.Maxwell), Devices.Hardware(AirohaRace.Audeze, AirohaRace.MaxwellCable)),
+        (Devices.Hardware(AirohaRace.Audeze, AirohaRace.MaxwellXbox), Devices.Hardware(AirohaRace.Audeze, AirohaRace.MaxwellCable)),
+    ];
     public static bool Shadowed(DeviceBattery device, IEnumerable<DeviceBattery> devices)
-        => device.Asleep && device.Hardware is { } hardware && Twins.Any(twin => twin.Receiver == hardware
-            && devices.Any(other => !other.Asleep && other.Percent is not null && other.Hardware == twin.Cable));
+        => device.Hardware is { } hardware
+        && (device.Asleep && Twins.Any(twin => twin.Receiver == hardware && devices.Any(other => !other.Asleep && other.Percent is not null && other.Hardware == twin.Cable))
+            || CableWins.Any(twin => twin.Receiver == hardware && devices.Any(other => !other.Asleep && other.Percent is not null && other.Hardware == twin.Cable)));
 
     // Inphic IN9 (248A:5B2E cable, 5B2F receiver; on 2.4 GHz vendor 0x249A, whose product is not fixed; feature 0x0C, 33
     // bytes): [0x0C, 0x01, command, 0, sequence, payload...]; 0xF0 the handshake (payload 01 01 FF), 0x20 the battery, the two
@@ -1427,6 +1436,9 @@ public static class Corsair
         new(0x0A97, "Corsair HS80 Max Wireless", DeviceKind.Headphones, true, Session: true),
     ];
     public static Model? Find(int vendor, int product) => vendor == Vendor ? Catalog.FirstOrDefault(model => model.Product == product) : null;
+    // The charge state (0x10) is asked only of the Virtuoso SE and XT, as corsair.py limits it; the Void v2 family's answer
+    // has no charging flag there and HeadsetControl does not ask it, so those are not asked something no source has seen.
+    public static bool AsksCharging(Model model) => model.Bare && model.Product is 0x0A40 or 0x0A3E or 0x0A3D or 0x0A64 or 0x0A62;
     // The receiver's vendor collections, usage 1 first.
     public static bool Collection(int usagePage) => usagePage == 0xFF42;
     public static IReadOnlyList<byte> Routes(Model model) => model.Cable ? [RouteReceiver, RouteDevice] : model.Product is 0x0A3E or 0x0A64 ? [RouteDevice, RouteReceiver] : [RouteDevice];

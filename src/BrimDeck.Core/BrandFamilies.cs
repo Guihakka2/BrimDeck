@@ -50,6 +50,64 @@ public sealed record BrandWay(string Name, WayTransport Transport, byte[] Reques
     // At most one read in this time on one collection; between, the last reading stands (a device whose link suffers from
     // being asked often).
     public int MinIntervalMs { get; init; }
+    // A second question, asked the same way only once the level came, whose answer says whether the device charges (a headset
+    // that tells it only there): Then is sent, Charging reads its answer (null: not its answer). Unanswered, the level stands
+    // as read. Not for Listen (nothing is sent).
+    public byte[]? Then { get; init; }
+    public Func<byte[], bool?>? Charging { get; init; }
+
+    // The level with the charging question's answer.
+    public static BatteryRead WithCharging(BatteryRead level, bool? charging) => charging is true ? level with { Charging = true } : level;
+
+    // How every question of the read goes, its gate and charging question as well as its request: the transport's way.
+    public WayStep Step => Transport switch
+    {
+        WayTransport.Feature => WayStep.SetThenGet,
+        WayTransport.FeatureGet => WayStep.Get,
+        WayTransport.OutputGetInput => WayStep.WriteThenFetch,
+        WayTransport.Listen => WayStep.Listen,
+        _ => WayStep.SendThenListen
+    };
+    // The length a feature report is got back with, for any question: FeatureLength where the read gives it (a firmware that
+    // stalls on any other, such as the Redragon M690 PRO's 8 bytes), else the collection's, and never shorter than the
+    // question set.
+    public int GetLength(byte[] question, int collectionLength)
+        => FeatureLength > 0 ? FeatureLength : Transport == WayTransport.FeatureGet ? collectionLength : Math.Max(question.Length, collectionLength);
+}
+
+// SendThenListen: the question is sent (written, or set as a feature report for FeatureListen) and the answer read off the input
+// reports; SetThenGet: set as a feature report, then, GapMs later, the feature report of the question's id got back; Get: only
+// got back, nothing set; WriteThenFetch: GetInputExchange; Listen: nothing sent, the input reports read.
+public enum WayStep { SendThenListen, SetThenGet, Get, WriteThenFetch, Listen }
+
+// WayTransport.OutputGetInput, apart from the device so it can be tried. A receiver can hold several old reports, each fetch
+// giving the next (vigil-watt's akg.md counted 13): they are fetched first, until one repeats (or nothing comes, or DrainMost),
+// and none of them is taken. Then the request is sent and the reply fetched every gapMs until it parses or timeoutMs passes. A
+// reply the same as the last old report is passed over (it may be the old one still) except at the last fetch: a level that
+// has not changed comes back byte for byte the same (HaloBattery's skullcandy.py takes it there too).
+public static class GetInputExchange
+{
+    public const int DrainMost = 16;
+    public static T? Run<T>(Func<byte[]?> fetch, Action send, Func<byte[], T?> parse, int timeoutMs, int gapMs, Action<int> sleep, Func<long> clock) where T : struct
+    {
+        byte[]? stale = null;
+        for (int i = 0; i < DrainMost; i++)
+        {
+            var old = fetch();
+            if (old is null || stale is not null && old.AsSpan().SequenceEqual(stale)) break;
+            stale = old;
+        }
+        send();
+        int gap = Math.Max(10, gapMs);
+        long deadline = clock() + timeoutMs;
+        while (true)
+        {
+            sleep(gap);
+            bool last = clock() + gap >= deadline;
+            if (fetch() is { } reply && (last || stale is null || !reply.AsSpan().SequenceEqual(stale)) && parse(reply) is { } value) return value;
+            if (last) return null;
+        }
+    }
 }
 
 // A brand's devices and their reads. Takes: whether a collection is the brand's to read (its vendor, and for a vendor id
