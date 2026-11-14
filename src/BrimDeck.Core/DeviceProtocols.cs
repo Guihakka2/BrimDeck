@@ -623,6 +623,13 @@ public static class Dongles
     // protocol for the 7 series). The A7's receiver id is from marsuyone/mchose-battery-tray's notes (facts only), whose
     // sample reply carries model 0x0070 (the A7 in the driver's table) and its level where the M7 Ultra's is. On 0x5253 this
     // is the one read sent, to any receiver with that collection, as the driver does.
+    // What else a reply says: a payload decoded all zero (vendor 0) is no answer: the receiver gives it while the mouse sleeps
+    // (HaloBattery, eight seconds of it), but also in place of the first answer after idle (aipno/mchose-linux) and it is the
+    // request itself read back, so it cannot say asleep and is skipped. A real reply with a level of 0 is the mouse asleep
+    // (Voltide's MchoseA7UltraProvider.cs reads it so). Charging is the charge status 1 (HaloBattery and Voltide measured 1 on
+    // the cable); 2 is charged on the cable (HifumiDaisuki01/MchoseBatteryTray's reading of M HUB), not charging. The flags
+    // byte (link mode in bits 0 to 2, link up in bit 3, as M HUB's parser defines it) is not read: no source measured a reply
+    // without the link.
     public const int MchoseRealtek = 0x5253;
     public static byte[] MchoseRealtekRequest(bool longReport)
     {
@@ -638,7 +645,8 @@ public static class Dongles
         int Byte(int at) => reply[2 + at] ^ 0xFF;
         int vendor = Byte(0) | Byte(1) << 8;
         if (vendor is not (MchoseRealtek or MchoseVendor or MchoseKeyboardVendor) || Byte(9) > 100) return null;
-        return (new(Byte(9), Byte(10) != 0), Byte(2) | Byte(3) << 8);
+        int model = Byte(2) | Byte(3) << 8;
+        return Byte(9) == 0 ? (new(null, Asleep: true), model) : (new(Byte(9), Byte(10) == 1), model);
     }
     // The model in the reply, by the vendor driver's own table as mchose-linux lists it (names only).
     public static string? MchoseRealtekModel(int model) => model switch
@@ -724,7 +732,7 @@ public static class Dongles
     {
         if (r.Length < 11 || r[0] != 0x55 || r[1] != 0xAA || r[5] != 0x00 || r[6] != 0x01 || r[7] != 0x0B) return null;
         int flags = r[3], length = r[4];
-        if (length < 3 || r.Length < 8 + length) return null;
+        if (flags > 1 || length < 3 || r.Length < 8 + length) return null;
         int check = flags ^ length ^ r[5] ^ r[6] ^ r[7];
         for (int i = 8; i < 8 + length - 1; i++) check ^= r[i];
         if (r[8 + length - 1] != (flags == 1 ? check : 0)) return null;
@@ -733,23 +741,31 @@ public static class Dongles
         return level <= 100 ? new(level, (r[9] & 0x80) != 0) : null;
     }
 
-    // MCHOSE keyboards on the 2.4 GHz receiver 41E4:2001 (a G87 in marsuyone/mchose-battery-tray's notes, a K87 in
-    // HaloBattery's mchose_kb.py; each measured its own), usage page 0xFF02: the output report 13 4A 01 00 (20 bytes, zeros
-    // after: getBattery's wireless command in the vendor's web driver), answered by an input report 13 4A 01 00 02 with the
-    // percent at 5. Byte 4 (02 in every answer either saw, 00 in the request) tells the answer from an echo of the request. A
-    // keyboard asleep does not answer. The byte after the level reads 1 on a full keyboard off its cable (HaloBattery), so it
-    // is no charging state and is not read. The receiver's feature report 0x06 on 0xFF04 is not read either. Facts only from
-    // the first; the second is MIT.
+    // MCHOSE keyboards on the 2.4 GHz receiver 41E4:2001 (a G87 in marsuyone/mchose-battery-tray's notes and
+    // kmizmal/mchose-battery's G87Protocol.cs, a K87 in HaloBattery's mchose_kb.py; each measured its own), usage page 0xFF02,
+    // the collection that declares report 0x13: the output report 13 4A 01 00, zeros, and at 19 the low byte of the sum of
+    // the nineteen bytes before it (5E): getBattery's wireless command as M HUB, the vendor's web driver, sends it
+    // (kmizmal/mchose-battery, from M HUB's code and measured on a G87). The answer is the input report 13 4A 01 00 02
+    // <percent> <flags>, with the same sum at 19 (HaloBattery's K87 answer: 13 4A 01 00 02 64 01 00 .. C5). Byte 4 (02 in every
+    // answer, 00 in the request) tells the answer from the request read back. A keyboard asleep does not answer. The flags are
+    // M HUB's fullStatus (low nibble) and chargeStatus (high nibble): 01 on a full keyboard off its cable (HaloBattery,
+    // kmizmal), 10 on the cable (kmizmal); only the high nibble is charging. The receiver's feature report 0x06 on 0xFF04 is not
+    // read. Facts only from marsuyone's notes (no license); HaloBattery is MIT, kmizmal/mchose-battery GPL (facts only).
     public const int MchoseKeyboardVendor = 0x41E4, MchoseKeyboardReceiver = 0x2001;
     // The A5 V2 Ultra on its cable, 41E4:1101: the RealTek exchange on its 0xFF01 collection (WanCixiong/MCHOSE-Tray-Indicator,
     // MIT, measured; its receiver is 3837:100C).
     public const int MchoseA5Cable = 0x1101;
-    public static byte[] MchoseKeyboardRequest() { var frame = new byte[20]; frame[0] = 0x13; frame[1] = 0x4A; frame[2] = 0x01; return frame; }
-    // Charging: the high nibble of the byte after the level (0x10 on the cable as vigil-watt measured it on the same frame of
-    // the AULA F99 Pro; the low nibble is full, which HaloBattery saw as 01 on a full keyboard off its cable).
+    public static byte[] MchoseKeyboardRequest()
+    {
+        var frame = new byte[20]; frame[0] = 0x13; frame[1] = 0x4A; frame[2] = 0x01;
+        frame[19] = MchoseKeyboardSum(frame);
+        return frame;
+    }
+    private static byte MchoseKeyboardSum(byte[] frame) { int sum = 0; for (int i = 0; i < 19; i++) sum += frame[i]; return (byte)sum; }
+    // A level of 0 is no reading (a keyboard that answers is not empty), as is a frame whose sum does not hold.
     public static BatteryRead? MchoseKeyboardBattery(byte[] reply)
-        => reply.Length >= 6 && reply[0] == 0x13 && reply[1] == 0x4A && reply[4] > 0 && reply[5] <= 100
-            ? new(reply[5], reply.Length >= 7 && (reply[6] & 0xF0) != 0) : null;
+        => reply.Length >= 20 && reply[0] == 0x13 && reply[1] == 0x4A && reply[4] > 0 && reply[5] is > 0 and <= 100 && reply[19] == MchoseKeyboardSum(reply)
+            ? new(reply[5], (reply[6] & 0xF0) != 0) : null;
 
     // The Gmouse query (MCHOSE G3 V2 on 3837:4245 and G7 on A8A5:2255, collection 0xFF01 usage 0x10): a 65-byte output
     // report 00 55 30 A5 0B 2E 01 01 01, answered by an input report starting AA 30 with the level at 8 and charging at 9. As
@@ -762,10 +778,11 @@ public static class Dongles
         => vendor == 0xA8A4 && product == 0x2255 && name.Trim() is var trimmed
         && (trimmed.Equals("MCHOSE G7", StringComparison.OrdinalIgnoreCase) || trimmed.Equals("MCHOSE G7 Pro", StringComparison.OrdinalIgnoreCase));
     public static byte[] GmouseRequest() { var frame = new byte[65]; new byte[] { 0x00, 0x55, 0x30, 0xA5, 0x0B, 0x2E, 0x01, 0x01, 0x01 }.CopyTo(frame, 0); return frame; }
+    // A level of 0 is the placeholder of an answer not ready yet (vigil-watt's MchoseGmouseCodec.cs), no reading.
     public static BatteryRead? GmouseBattery(byte[] reply)
     {
         int at = reply.Length > 1 && reply[0] == 0xAA && reply[1] == 0x30 ? 0 : reply.Length > 2 && reply[1] == 0xAA && reply[2] == 0x30 ? 1 : -1;
-        if (at < 0 || reply.Length < at + 10 || reply[at + 8] > 100) return null;
+        if (at < 0 || reply.Length < at + 10 || reply[at + 8] is 0 or > 100) return null;
         return new(reply[at + 8], reply[at + 9] != 0);
     }
 
@@ -861,7 +878,7 @@ public static class Dongles
     // not verified:
     // [0x4D, 0x01, flags 1 (checksummed), length, command low, command high, 0, 0, data..., XOR of bytes 2 to 7 + length].
     // Device info is command 0x0900: its payload (from byte 8) holds the connection at 10, charging at 11 and the level at 12;
-    // a level of 0 means the mouse is not connected, and a first byte of 0xFF that the receiver is not ready.
+    // a connection of 0 means the mouse is not connected, and a first byte of 0xFF that the receiver is not ready.
     public const int MchoseVendor = 0x3837;
     public static byte[] MchoseRequest()
     {
@@ -871,14 +888,28 @@ public static class Dongles
         frame[8] = xor;
         return frame;
     }
-    // The connection at 10 is 0 while the receiver has no link to the mouse (asleep or off), 2 on the 2.4 GHz link
-    // (mitsimi/mchose-tray, GPL, facts only, and hxw-dream/MCHOSE-Battery, both measured on a K7 V2 Ultra+ on 3837:1014).
+    // The answer: 4D 01 <flags 0 or 1> <payload length> 00 09 .. .., the payload, and with flags 1 the XOR of bytes 2 to the
+    // payload's end after it (mitsimi/mchose-tray, GPL, facts only, and kmizmal/mchose-battery, GPL, facts only: both check it;
+    // mitsimi's K7 V2 Ultra+ sample 4D 01 01 10 00 09 00 00 37 38 .. 02 00 53 .. D8, 83 %). A payload too short to hold the
+    // level is the error a collection that does not take the command gives (kmizmal measured 4D 01 01 01 00 09 00 00 FE F7 on
+    // a V7 mouse's own collection), no reading. The connection at 10 is 0 while the receiver has no link to the mouse (asleep
+    // or off; 2 on mitsimi's 2.4 GHz link, 1 on kmizmal's V7), a first payload byte FF the receiver busy (hxw-dream/
+    // MCHOSE-Battery). Charging is the charge status 1: M HUB shows charging only for 1, and kmizmal measured 1 charging and 2
+    // on the cable but not charging.
     public static BatteryRead? MchoseBattery(byte[] reply)
     {
-        if (reply.Length < 21 || reply[0] != 0x4D || reply[4] != 0x00 || reply[5] != 0x09 || reply[8] == 0xFF) return null;
+        if (reply.Length < 9 || reply[0] != 0x4D || reply[1] != 0x01 || reply[2] > 1 || reply[4] != 0x00 || reply[5] != 0x09 || reply[8] == 0xFF) return null;
+        int length = reply[3], end = 8 + length;
+        if (length < 13 || end + reply[2] > reply.Length) return null;
+        if (reply[2] == 1)
+        {
+            byte check = 0;
+            for (int i = 2; i < end; i++) check ^= reply[i];
+            if (reply[end] != check) return null;
+        }
         if (reply[8 + 10] == 0) return new(null, Asleep: true);
         int level = reply[8 + 12];
-        return level is > 0 and <= 100 ? new(level, reply[8 + 11] != 0) : null;
+        return level is > 0 and <= 100 ? new(level, reply[8 + 11] == 1) : null;
     }
 
     // AJAZZ AJ179-family dual-mode mice on the XCTECH 2.4 GHz receiver (VID 0x249A PID 0x5C2F, HID MI_02) and the documented
@@ -1000,7 +1031,8 @@ public static class Dongles
         if (F83Find(vendor, product) is { } f83)
             return F83Collection(f83, iface, usagePage, featureLength) ? Protocol.F83
                 : CompxBesideF83.Contains((vendor, product)) && CompxFramedCollection(usagePage, usage, inputLength, outputLength) ? Protocol.CompxFramed : null;
-        if (Gmouse.Contains((vendor, product)) || GmouseNamed(vendor, product, productName)) return usagePage == 0xFF01 && usage == 0x0010 && outputLength >= 65 ? Protocol.Gmouse : null;
+        if (Gmouse.Contains((vendor, product)) || GmouseNamed(vendor, product, productName))
+            return usagePage == 0xFF01 && usage == 0x0010 && outputLength >= 65 && (outputIds is null || outputIds.Contains(0x00)) ? Protocol.Gmouse : null;
         if (CompxSplitFind(vendor, product) is not null) return CompxSplitCommand(usagePage, usage, featureLength) ? Protocol.CompxSplit : null;
         if (vendor == NordicVendor && NinjutsoProducts.Contains(product)) return usagePage == 0xFFA0 && featureLength >= 32 ? Protocol.Nordic : null;
         // MCHOSE: on 0x5253 the 7 series' exchange on its configuration collection; on 0x3837 whichever of the brand's reads
@@ -1008,7 +1040,8 @@ public static class Dongles
         if (vendor == MchoseRealtek) return usagePage == 0xFF01 && featureLength >= 21 ? Protocol.MchoseRealtek : null;
         if (vendor == MchoseVendor) return MchoseReads(product, productName, usagePage, usage, featureLength, outputLength).Count > 0 ? Protocol.Mchose : null;
         if (vendor == MchoseKeyboardVendor && product == MchoseA5Cable) return usagePage == 0xFF01 && featureLength >= 21 ? Protocol.MchoseRealtek : null;
-        if (vendor == MchoseKeyboardVendor && product == MchoseKeyboardReceiver) return usagePage == 0xFF02 && inputLength >= 6 && outputLength >= 20 ? Protocol.MchoseKeyboard : null;
+        if (vendor == MchoseKeyboardVendor && product == MchoseKeyboardReceiver)
+            return usagePage == 0xFF02 && inputLength >= 20 && outputLength >= 20 && (outputIds is null || outputIds.Contains(0x13)) ? Protocol.MchoseKeyboard : null;
         if (vendor == 0x3151 && product == 0x402D) return iface == 2 && usagePage == 0xFFFF && usage == 0x0002 && featureLength == 65 ? Protocol.Lingbao : null;
         if (vendor == 0x1E71 && product is 0x2101 or 0x2129) return usagePage == 0xFFCA && usage == 0x0001 && outputLength >= 64 ? Protocol.Nzxt : null;
         if (vendor == 0x046A && product is 0x01E4 or 0x01E2) return usagePage == 0xFF1C && usage == 0x0092 && outputLength >= 64 ? Protocol.Cherry : null;

@@ -180,12 +180,12 @@ static class BrandsHeadsetTests
             && Names(Shape(0x373B, 0x1262, 0x90FF, 1, 0, outputIds: [0x55]), "ATK Headset").SequenceEqual(["atk-headset.state"])
             && Untaken(Shape(0x373B, 0x1262, 0xFF82, 1, 0, outputIds: [0x55]), "ATK Headset")
             && Untaken(Shape(0x373B, 0x1262, 0xFF05, 1, 0, outputIds: [0x55]), "ATK Headset")
-            && Untaken(Shape(0x373B, 0x1263, 0xFF90, 1, 0, outputIds: [0x55]), "ATK Headset")
+            && Untaken(Shape(0x373B, 0x1263, 0xFF90, 1, 0, outputIds: [0x55]), "ATK Headset") && Untaken(Shape(0x373B, 0x1262, 0xFF90, 2, 0, outputIds: [0x55]), "ATK Headset")
             && Dongles.Find(0x373B, 0x1262, 0xFF90, "ATK N9V2 ULTIMATE dongle", 0, 0, 1, 64, 64) is null);
         check("FIFINE and ATK: the query 55 65 01 00; Voltide's measured answer (100 %), charging, full, the headset off (55 0A) and the link lost (1A); the query read back is none",
             Fifine.Request().SequenceEqual(Hex("55 65 01 00")) && AtkHeadsets.Request().SequenceEqual(Hex("55 65 01 00"))
             && AtkHeadsets.StateBattery(Hex("55 65 64 02 02 00 00 04 00 00 00 00 01 02 01 00 05 02 00", 64)) == new BatteryRead(100)
-            && Fifine.Battery(Hex("55 65 32 03", 64)) == new BatteryRead(50, true)
+            && Fifine.Battery(Hex("55 65 32 03", 64)) == new BatteryRead(50, true) && Fifine.Battery(Hex("55 65 50 02 02 00 00 FF", 64)) == new BatteryRead(80)
             && AtkHeadsets.StateBattery(Hex("55 65 63 04", 64)) == new BatteryRead(100)
             && AtkHeadsets.StateBattery(Hex("55 0A 00 00", 64)) == new BatteryRead(null, Asleep: true)
             && Fifine.Battery(Hex("55 65 40 1A", 64)) == new BatteryRead(null, Asleep: true)
@@ -226,8 +226,9 @@ static class BrandsHeadsetTests
             && Parse(dongle, Reply(3831, 0x03)) == new BatteryRead(75, Coarse: true) && Parse(dongle, Reply(3743, 0x03)) == new BatteryRead(50, Coarse: true)
             && Parse(dongle, Reply(3897, 0x0A)) == new BatteryRead(50, true, Coarse: true) && Parse(dongle, Reply(4150, 0x03)) == new BatteryRead(100, Coarse: true)
             && Parse(cable, Reply(4077, 0x03)) == new BatteryRead(75, true, Coarse: true));
-        check("ASUS Strix Go 2.4: the unknown-packet answer (FF AA), zeros, a frame without the live header and the request read back are none",
-            Parse(dongle, Hex("FF FF AA", 64)) is null && Parse(dongle, Hex("FF", 64)) is null && Parse(dongle, Reply(3831, 0x03).Select((b, i) => i == 1 ? (byte)0x1A : b).ToArray()) is null
+        check("ASUS Strix Go 2.4: bytes 1 to 3 zero (off or asleep, HaloBattery) asleep; the unknown-packet answer (FF AA), a frame without the live header and the request read back are none",
+            Parse(dongle, Hex("FF", 64)) == new BatteryRead(null, Asleep: true)
+            && Parse(dongle, Hex("FF FF AA", 64)) is null && Parse(dongle, Reply(3831, 0x03).Select((b, i) => i == 1 ? (byte)0x1A : b).ToArray()) is null
             && Parse(dongle, BrandFamilies.Find(dongle)!.Value.Ways[0].Request) is null);
     }
 
@@ -277,6 +278,20 @@ static class BrandsHeadsetTests
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 05 10 00 02 00 00 03 00 01 01 5A 39 2C", 64)) is null
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 00 11 00 03 00 00 03 00 01 01 5A 98 B5", 64)) is null
             && BrimDeck.Core.Darkrim.Battery(Hex("FE 00 11 00 03 00 00 10 00 03 0E 00 01 01 01 09 30 31 2E 30 31 2E 30 35 00 7A DC", 64)) is null);
+        static byte[] Notice(params byte[] payload)
+        {
+            var frame = new byte[64];
+            new byte[] { 0xFE, 0x00, 0x11, 0x00, 0x03, 0x00, 0x00, (byte)payload.Length, 0x00 }.CopyTo(frame, 0);
+            payload.CopyTo(frame, 9);
+            ushort sum = BrimDeck.Core.Darkrim.Crc16(frame.AsSpan(0, 9 + payload.Length));
+            frame[9 + payload.Length] = (byte)(sum >> 8); frame[10 + payload.Length] = (byte)sum;
+            return frame;
+        }
+        check("DARKRIM: left, right and case: the lower bud, charging by bit 7; all three 0 (not linked) asleep; a single 0 none",
+            BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0x50, 0x46, 0x64)) == new BatteryRead(70)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0xD0, 0x46, 0x64)) == new BatteryRead(70, true)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x03, 0x00, 0x00, 0x00)) == new BatteryRead(null, Asleep: true)
+            && BrimDeck.Core.Darkrim.Battery(Notice(0x01, 0x01, 0x00)) is null);
     }
 
     private static void Edifier(Action<string, bool> check)
@@ -322,9 +337,13 @@ static class BrandsHeadsetTests
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 08", 64)) == new BatteryRead(93)
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 02", 64)) == new BatteryRead(93, true)
             && Parse(omni, Hex("01 B0 00 00 00 00 5D 00 00 00 00 00 00 00 00 01", 64)) == new BatteryRead(null, Asleep: true));
-        check("SteelSeries headsets: each request read back, buds both in the case, another report, and a level out of range are none",
+        check("SteelSeries headsets: buds both docked or off are asleep (HeadsetControl's offline); the Elite on its cable (power 02) charges",
+            Parse(buds, Hex("B0 00 00 02 02 00 00", 64)) == new BatteryRead(null, Asleep: true) && Parse(buds, Hex("B0 00 00 03 02 00 00", 64)) == new BatteryRead(null, Asleep: true)
+            && Parse(elite, Hex("01 B0 00 00 01 00 1F 64 00 00 00 00 00 00 02", 64)) == new BatteryRead(31, true)
+            && Parse(elite, Hex("01 B0 00 00 01 00 1F 64 00 00 00 00 00 00 04", 64)) == new BatteryRead(31));
+        check("SteelSeries headsets: each request read back, another report, and a level out of range are none",
             Parse(arctis1, Hex("06 12 00 00", 8)) is null && Parse(plus, Hex("B0", 64)) is null && Parse(nova5, Hex("B0", 64)) is null
-            && Parse(buds, Hex("B0", 64)) is null && Parse(buds, Hex("B0 00 00 02 02 00 00", 64)) is null
+            && Parse(buds, Hex("B0", 64)) is null && Parse(buds, Hex("B0 00 00 01 02 00 00", 64)) is null
             && Parse(elite, Hex("01 B0", 64)) is null && Parse(omni, Hex("01 B0", 64)) is null
             && Parse(nova5, Hex("01 00 63 02 00", 64)) is null && Parse(plus, Hex("B0 00 05 00", 64)) is null && Parse(nova5, Hex("B0 03 00 C8 00", 64)) is null);
     }

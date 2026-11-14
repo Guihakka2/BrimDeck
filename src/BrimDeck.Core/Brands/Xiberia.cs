@@ -1,7 +1,8 @@
 namespace BrimDeck.Core;
 
 // XIBERIA (西伯利亚) headsets on their 2.4 GHz receivers, vendor 0x36F9 (the receivers' own id; XIBERIA HUB binds any
-// collection that declares report 0x55, not a product list, so every 36F9 vendor collection that declares it is asked).
+// receiver whose descriptor declares reports 0x55 and 0x41, not a product list, so every 36F9 vendor collection that declares
+// 0x55, the command report, is asked).
 // Output report 0x55, 64 bytes: 55 65 00 00 (0x65 the battery, 00 the device index); the answer 55 65 00 <percent>, no
 // charging state. From Voltide's XiberiaT7Provider.cs (MIT; from XIBERIA HUB's ActHID.dll, checked on a T7, 36F9:F008). The
 // query read back (55 65 00 00) is no reading.
