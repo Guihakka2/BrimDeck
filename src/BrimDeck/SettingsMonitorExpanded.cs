@@ -146,12 +146,16 @@ public sealed partial class SettingsWindow
     // (swap). As in the list of blocks, the other part makes way while the pointer is past its middle, and the dragged one settles in
     // its new place before the sketch is built again.
     // escape: where the drag leaves the pair (up or down for side by side parts, past the top or the bottom for parts one above the
-    // other), the parts go back and the block they are in is dragged instead.
-    // starters: given each part and how to start dragging it from a pointer already down, for a part inside it to hand its drag on.
-    private Grid SketchPair(FrameworkElement first, FrameworkElement second, Action swap, bool vertical = false, Action<MouseEventArgs>? escape = null,
+    // other), it is handed on: side by side parts go back; parts one above the other that have changed places stay so, and the change
+    // is handed on with the drag (pending), to be saved when the block is let go. starters: each part with how to start dragging it from
+    // a pointer pressed inside it, for a part inside to hand its drag on to it.
+    private Grid SketchPair(FrameworkElement first, FrameworkElement second, Action swap, bool vertical = false, Action<MouseEventArgs, Action?>? escape = null,
         Action<FrameworkElement, Action<MouseEventArgs>>? starters = null)
     {
         var pair = new Grid { Background = Brushes.Transparent };
+        // Where the press was, so a part that takes over a drag follows the pointer from there rather than from where it is now.
+        Point pressed = default;
+        pair.PreviewMouseLeftButtonDown += (_, e) => pressed = e.GetPosition(pair);
         if (vertical)
         {
             pair.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); pair.RowDefinitions.Add(new RowDefinition { Height = new GridLength(SketchGap) });
@@ -205,33 +209,41 @@ public sealed partial class SettingsWindow
             {
                 if (settling) return;
                 Place(part, Offset(part)); Place(other, Offset(other));
-                start = Along(e) - Offset(part); down = e.GetPosition(pair); past = false; Panel.SetZIndex(part, 2);
-                if (!part.CaptureMouse()) { start = double.NaN; Panel.SetZIndex(part, 0); }
+                down = pressed; start = (vertical ? down.Y : down.X) - Offset(part); past = false; Panel.SetZIndex(part, 2);
+                if (!part.CaptureMouse()) { start = double.NaN; Panel.SetZIndex(part, 0); return; }
+                if (e is not MouseButtonEventArgs) Follow(e);
             }
             starters?.Invoke(part, Begin);
             part.MouseLeftButtonDown += (_, e) => { e.Handled = true; Begin(e); };
-            part.MouseMove += (_, e) =>
+            void Follow(MouseEventArgs e)
             {
-                if (double.IsNaN(start) || !part.IsMouseCaptured) return;
                 var at = e.GetPosition(pair);
                 bool leaves = vertical ? at.Y < -8 || at.Y > pair.ActualHeight + 8
                     : Math.Abs(at.Y - down.Y) > 6 && Math.Abs(at.Y - down.Y) > Math.Abs(at.X - down.X);
                 if (escape is not null && leaves)
                 {
-                    start = double.NaN; past = false;
-                    Slide(part, 0, () => Panel.SetZIndex(part, 0)); Slide(other, 0);
-                    escape(e);
-                    e.Handled = true;
+                    start = double.NaN;
+                    Action? pending = null;
+                    if (vertical && past) { settling = true; pending = swap; }
+                    else { Slide(part, 0, () => Panel.SetZIndex(part, 0)); Slide(other, 0); }
+                    past = false;
+                    escape(e, pending);
                     return;
                 }
                 double moved = Along(e) - start;
                 Place(part, direction > 0 ? Math.Clamp(moved, 0, Reach()) : Math.Clamp(moved, -Reach(), 0));
                 bool now = Math.Abs(Offset(part)) > Reach() / 2;
                 if (now != past) { past = now; Slide(other, now ? -direction * (Size(part) + SketchGap) : 0); }
+            }
+            part.MouseMove += (_, e) =>
+            {
+                if (double.IsNaN(start) || !part.IsMouseCaptured) return;
+                Follow(e);
                 e.Handled = true;
             };
             part.MouseLeftButtonUp += (_, e) => { if (!double.IsNaN(start)) { e.Handled = true; Stop(past); } };
-            part.LostMouseCapture += (_, _) => Stop(false);
+            // LostMouseCapture bubbles: only the part's own loss ends its drag, not a part inside it handing its drag on.
+            part.LostMouseCapture += (_, e) => { if (e.OriginalSource == part) Stop(false); };
         }
         Drag(first, second, 1); Drag(second, first, -1);
         return pair;
@@ -240,22 +252,25 @@ public sealed partial class SettingsWindow
     // The inside of the memory and network block when it shows more than one thing, as the page shows it at its usual sizes: memory
     // on a row and the network on the next (a very short page puts the two on one line, in the same order), the two rates halves of
     // the network's row. Every part is a whole row's height to take hold of. Dragged across, the two rates change sides; dragged up or
-    // down, a rate takes its row along, which changes places with memory inside the block; dragged out of the block, either row takes
-    // the whole block (grip). swap: Memory to change memory and the network round, Download the rates.
+    // down, a rate takes the network's row along. Either row dragged up or down changes places with the other inside the block, and
+    // dragged on out of it takes the whole block (grip), the change kept. swap: Memory to change memory and the network round,
+    // Download the rates.
     private FrameworkElement MetricsInside(IReadOnlyList<ExpandedReading> readings, Action<ExpandedItem> swap, SketchGrip grip)
     {
         var shown = readings.Where(reading => reading.Visible && ExpandedMonitor.BlockOf(reading.Item)[0] == ExpandedItem.Memory).Select(reading => reading.Item).ToList();
         var rates = shown.Where(item => item != ExpandedItem.Memory).ToList();
-        var row = new SketchGrip();
+        // A rate dragged up or down takes the network's row, which changes places with memory inside the block and, dragged on out
+        // of it, takes the whole block; without memory, the rate takes the block at once.
+        Action<MouseEventArgs>? row = null;
         FrameworkElement network = rates.Count == 1 ? SketchRow(SketchText(ExpandedName(rates[0])))
             : SketchPair(SketchRow(SketchText(ExpandedName(rates[0]))), SketchRow(SketchText(ExpandedName(rates[1]))), () => swap(ExpandedItem.Download),
-                escape: e => (row.Start ?? grip.Start)?.Invoke(e));
+                escape: (e, _) => { if (row is not null) row(e); else grip.Start?.Invoke(e, null); });
         if (!shown.Contains(ExpandedItem.Memory)) return network;
         var memory = SketchRow(SketchText(ExpandedName(ExpandedItem.Memory)));
-        void Starters(FrameworkElement part, Action<MouseEventArgs> begin) { if (part == network) row.Start = begin; }
+        void Starters(FrameworkElement part, Action<MouseEventArgs> begin) { if (part == network) row = begin; }
         return shown[0] == ExpandedItem.Memory
-            ? SketchPair(memory, network, () => swap(ExpandedItem.Memory), vertical: true, escape: e => grip.Start?.Invoke(e), starters: Starters)
-            : SketchPair(network, memory, () => swap(ExpandedItem.Memory), vertical: true, escape: e => grip.Start?.Invoke(e), starters: Starters);
+            ? SketchPair(memory, network, () => swap(ExpandedItem.Memory), vertical: true, escape: (e, pending) => grip.Start?.Invoke(e, pending), starters: Starters)
+            : SketchPair(network, memory, () => swap(ExpandedItem.Memory), vertical: true, escape: (e, pending) => grip.Start?.Invoke(e, pending), starters: Starters);
     }
 
     // The sketch of the page: the shown blocks in the page's order, the process list beside them. Built again when what it shows
@@ -327,7 +342,8 @@ public sealed partial class SettingsWindow
         => string.Join("|", order.Select(item => BlockName(ExpandedMonitor.BlockOf(item), readings))) + "|" + processes + "|" + Loc.Language;
 
     // How a part inside a block hands its drag on to the block: the block sets Start once it is made.
-    private sealed class SketchGrip { public Action<MouseEventArgs>? Start; }
+    // pending: a change made inside the block on the way (memory and the network changed round), saved when the block is let go.
+    private sealed class SketchGrip { public Action<MouseEventArgs, Action?>? Start; }
 
     // A block of the sketch, in the accent's tint and outline, named by what it shows (or showing its parts: inside). moved: the shown
     // blocks' new order (each named by its first item), after a drag or Alt+Up/Down.
@@ -347,6 +363,8 @@ public sealed partial class SettingsWindow
         List<ExpandedItem> Order() => [.. stack.Children.OfType<Border>().Select(child => (ExpandedItem)child.Tag)];
 
         Border[] blocks = []; double[] tops = [], heights = [];
+        // A change made inside the block on its way out of it (memory and the network changed round), saved when the block is let go.
+        Action? pending = null;
         int from = -1, target = -1; double grab = 0;
         void Measure()
         {
@@ -372,6 +390,8 @@ public sealed partial class SettingsWindow
         {
             if (from < 0) return;
             int start = from, end = target; from = -1;
+            // A change made inside the block on the way is saved after the block's own move, once it has settled.
+            var after = pending; pending = null;
             if (view.IsMouseCaptured) view.ReleaseMouseCapture();
             if (commit && end != start)
             {
@@ -381,26 +401,32 @@ public sealed partial class SettingsWindow
                 double settled = others.Take(end).Sum(other => heights[Array.IndexOf(blocks, other)] + SketchGap);
                 foreach (var other in others) SetRowOffset(other, 0);
                 SetRowOffset(view, shown - settled);
-                AnimateRow(view, 0, () => Panel.SetZIndex(view, 0));
+                // The block's place is saved first: the change inside it (after) builds the sketch again from the settings, and may run
+                // at once (no motion), so it must find the block's new place already there.
                 moved(Order());
+                AnimateRow(view, 0, () => { Panel.SetZIndex(view, 0); after?.Invoke(); });
                 return;
             }
             foreach (var other in blocks) AnimateRow(other, 0);
             Panel.SetZIndex(view, 0);
+            after?.Invoke();
         }
-        // Takes the whole block from where the pointer is: pressed on the block, or carried on from a part inside it (grip).
+        // Takes the whole block, pressed on it or carried on from a part inside it (grip). Held where it was pressed: a part that hands
+        // its drag on after the pointer has moved, the block jumps to the pointer and follows it, rather than trailing behind.
+        double press = 0;
+        view.PreviewMouseLeftButtonDown += (_, e) => press = e.GetPosition(stack).Y;
         void Begin(MouseEventArgs e)
         {
             Measure();
             from = target = Array.IndexOf(blocks, view);
             if (from < 0 || blocks.Length < 2) { from = -1; return; }
-            grab = e.GetPosition(stack).Y - tops[from] - RowTransform(view).Y;
+            grab = press - tops[from] - RowTransform(view).Y;
             view.Focus(); Panel.SetZIndex(view, 2);
             if (!view.CaptureMouse()) { from = -1; Panel.SetZIndex(view, 0); }
         }
-        if (grip is not null) grip.Start = Begin;
+        if (grip is not null) grip.Start = (e, change) => { Begin(e); if (from >= 0) pending = change; else change?.Invoke(); Follow(e); };
         view.MouseLeftButtonDown += (_, e) => { Begin(e); e.Handled = true; };
-        view.MouseMove += (_, e) =>
+        void Follow(MouseEventArgs e)
         {
             if (from < 0 || !view.IsMouseCaptured) return;
             double top = Math.Clamp(e.GetPosition(stack).Y - grab, 0, tops[^1] + heights[^1] - heights[from]);
@@ -409,9 +435,12 @@ public sealed partial class SettingsWindow
             // block's bottom passes its middle. (Their middles alone kept a tall block from ever passing a short last one.)
             int to = Enumerable.Range(0, blocks.Length).Count(i => i < from ? top >= tops[i] + heights[i] / 2 : i > from && top + heights[from] > tops[i] + heights[i] / 2);
             if (to != target) { target = to; Arrange(to); }
-        };
+        }
+        view.MouseMove += (_, e) => Follow(e);
         view.MouseLeftButtonUp += (_, e) => { if (from >= 0) { End(true); e.Handled = true; } };
-        view.LostMouseCapture += (_, _) => End(false);
+        // LostMouseCapture bubbles: a part inside handing its drag on to the block loses the capture to it, and that must not end the
+        // block's drag that has just begun. Only the block's own loss ends it.
+        view.LostMouseCapture += (_, e) => { if (e.OriginalSource == view) End(false); };
         view.PreviewKeyDown += (_, e) =>
         {
             if (Keyboard.Modifiers != ModifierKeys.Alt || e.Key != Key.System || e.SystemKey is not (Key.Up or Key.Down)) return;
