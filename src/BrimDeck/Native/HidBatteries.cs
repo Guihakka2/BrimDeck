@@ -1099,21 +1099,27 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         return [Mouse("mchose", info, "MCHOSE", answer.Read, preferredName: Dongles.MchoseRealtekModel(answer.Model))];
     }
 
-    // The RealTek exchange: the short report first, then the long one, each asked afresh before every read.
+    // The RealTek exchange: the short report first, then the long one (only those the collection declares, when its report ids
+    // are known), each asked afresh before every read. A reply that says the mouse is asleep is kept while the other asks go on
+    // (an awake mouse's answer comes in about one exchange in two), and stands only when none gives a level.
     private static (BatteryRead Read, int Model)? RealtekAsk(HidInfo info)
     {
         using var device = new HidDevice(info);
+        (BatteryRead Read, int Model)? asleep = null;
         foreach (bool longReport in new[] { false, true })
         {
             var request = Dongles.MchoseRealtekRequest(longReport);
+            if (info.FeatureIds.Count > 0 && !info.FeatureIds.Contains(request[0])) continue;
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 if (!device.SetFeature(request)) break;
                 Thread.Sleep(120);
-                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is { } reply && Dongles.MchoseRealtekBattery(reply) is { } answer) return answer;
+                if (device.GetFeature(request[0], Math.Max(request.Length, device.FeatureLength)) is not { } reply || Dongles.MchoseRealtekBattery(reply) is not { } answer) continue;
+                if (!answer.Read.Asleep) return answer;
+                asleep = answer;
             }
         }
-        return null;
+        return asleep;
     }
 
     // The MCHOSE keyboards on 41E4:2001 (Dongles.MchoseKeyboardRequest): the command written, the answer read off the input

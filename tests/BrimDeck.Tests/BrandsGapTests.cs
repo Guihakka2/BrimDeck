@@ -90,16 +90,37 @@ static class BrandsGapTests
             Dongles.Find(0x2023, 0xF024, 0xFFFF, "", 65, 2, 0x0001, 0, 0) == Dongles.Protocol.F83 && Dongles.Find(0x2023, 0xF024, 0xFFFF, "", 65, 1, 0x0001, 0, 0) is null
             && Dongles.Find(0x2023, 0xF017, 0xFFFF, "", 65, 2) == Dongles.Protocol.F83 && Dongles.Find(0x2023, 0xF022, 0xFFFF, "", 65, 2) == Dongles.Protocol.F83
             && Dongles.Twins.Contains(("2023:F024", "2023:F026")));
-        var v9 = Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE V9 PRO");
-        check("MCHOSE V9 Pro: the status read on C-Media's 291D:385D only where the product names it; 00 is on its cable",
+        var v9 = Shape(0x291D, 0x385D, 0xFF90, 1, 64, 64, [0x55], "MCHOSE V9 PRO");
+        check("MCHOSE V9 Pro: the status read on C-Media's 291D:385D, only its 0xFF90 usage 1 collection and only where the product names it",
             BrandFamilies.Find(v9) is { Family.Brand: "MCHOSE V9 Pro" } found && found.Ways.Select(way => way.Name).SequenceEqual(["mchose.v9pro"])
-            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE S9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0x90FF, 1, 64, 64, [0x55], "V9 PRO")) is { Family.Brand: "MCHOSE V9 Pro" }
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF90, 1, 64, 64, [0x55], "MCHOSE S9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF00, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF82, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
+            && BrandFamilies.Find(Shape(0x291D, 0x385D, 0xFF90, 2, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
             && BrandFamilies.Find(Shape(0x291D, 0x385D, 0x000C, 1, 64, 64, [0x55], "MCHOSE V9 PRO")) is null
-            && MchoseV9Pro.Request().Length == 64 && MchoseV9Pro.Request().Take(3).SequenceEqual(new byte[] { 0x55, 0x65, 0x01 })
-            && MchoseV9Pro.Battery(Bytes("55 65 3C 00")) == new BatteryRead(60, true) && MchoseV9Pro.Battery(Bytes("55 65 14 02")) == new BatteryRead(20)
-            && MchoseV9Pro.Battery(Bytes("55 65 65 02")) is null && MchoseV9Pro.Battery(Bytes("55 11 14 02")) is null);
-        check("MCHOSE 41E4 keyboards: the high nibble of the byte after the level is charging, the low one (full) is not",
-            Dongles.MchoseKeyboardBattery(Bytes("13 4A 01 00 02 34 10 00")) == new BatteryRead(52, true) && Dongles.MchoseKeyboardBattery(Bytes("13 4A 01 00 02 64 01 00")) == new BatteryRead(100));
+            && MchoseV9Pro.Request().Length == 64 && MchoseV9Pro.Request().Take(3).SequenceEqual(new byte[] { 0x55, 0x65, 0x01 }));
+        // HaloBattery's 60 % on the cable (00) and rafagfran's 20 % on battery (02); vigil-watt's 100 % (55 65 64 02); M HUB's 03
+        // charging, 04 full and 1A asleep (aipno/mchose-linux); 0 the receiver's answer while the headset sleeps (vigil-watt).
+        check("MCHOSE V9 Pro: every state: on the cable, on battery, charging, full; asleep (1A) and level 0 asleep, never a level",
+            MchoseV9Pro.Battery(Bytes("55 65 3C 00")) == new BatteryRead(60, true) && MchoseV9Pro.Battery(Bytes("55 65 14 02")) == new BatteryRead(20)
+            && MchoseV9Pro.Battery(Bytes("55 65 64 02 00 00")) == new BatteryRead(100) && MchoseV9Pro.Battery(Bytes("55 65 55 03")) == new BatteryRead(85, true)
+            && MchoseV9Pro.Battery(Bytes("55 65 64 04")) == new BatteryRead(100)
+            && MchoseV9Pro.Battery(Bytes("55 65 50 1A")) == new BatteryRead(null, Asleep: true) && MchoseV9Pro.Battery(Bytes("55 65 00 1A")) == new BatteryRead(null, Asleep: true)
+            && MchoseV9Pro.Battery(Bytes("55 65 00 02")) == new BatteryRead(null, Asleep: true) && MchoseV9Pro.Battery(Bytes("55 65 00 00")) == new BatteryRead(null, Asleep: true));
+        check("MCHOSE V9 Pro: the request read back, a state no source documents, a level out of range and another command are none",
+            MchoseV9Pro.Battery(MchoseV9Pro.Request()) is null && MchoseV9Pro.Battery(Bytes("55 65 50 01")) is null && MchoseV9Pro.Battery(Bytes("55 65 50 0A")) is null
+            && MchoseV9Pro.Battery(Bytes("55 65 65 02")) is null && MchoseV9Pro.Battery(Bytes("55 11 14 02")) is null && MchoseV9Pro.Battery(Bytes("55 65 14")) is null);
+        static byte[] Keyboard(params byte[] head)
+        {
+            var frame = new byte[20]; head.CopyTo(frame, 0);
+            int sum = 0; for (int i = 0; i < 19; i++) sum += frame[i];
+            frame[19] = (byte)sum;
+            return frame;
+        }
+        check("MCHOSE 41E4 keyboards: the high nibble of the byte after the level is charging (10 on the cable), the low one (full) is not",
+            Dongles.MchoseKeyboardBattery(Keyboard(0x13, 0x4A, 0x01, 0x00, 0x02, 0x34, 0x10)) == new BatteryRead(52, true)
+            && Dongles.MchoseKeyboardBattery(Keyboard(0x13, 0x4A, 0x01, 0x00, 0x02, 0x64, 0x01)) == new BatteryRead(100));
     }
 
     private static void Fa09Receiver(Action<string, bool> check)
