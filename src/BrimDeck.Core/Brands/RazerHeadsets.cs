@@ -18,7 +18,8 @@ namespace BrimDeck.Core;
 //   (02 80 07 .. .. 50 41 0E .. 02 E1 01, sent twice: the first only wakes the link) and off after (the same with 00). The
 //   answer is 02 .. 50 49 ..., the command at 12, 01 (acknowledged) at 13, the length at 14 and the level at 15. As
 //   HaloBattery's blackshark.py (MIT) and vigil-watt's razer-headset.md (MIT, measured on a 0555: 02 0E 50 49 08 CE 92 DE 05
-//   00 04 00 21 01 01 4F, 79 %) give it. Charging is another query (0x2A) and is not asked. A switched-off headset does not
+//   00 04 00 21 01 01 4F, 79 %) give it. Charging is another query (0x2A), asked right after the level in the same remote
+//   session (the Barracuda Pro's too), as HaloBattery does. A switched-off headset does not
 //   answer. Both sources are Windows programs taking the page as Windows gives it (0xFF00 or 0xFF14, as is).
 // - Barracuda Pro (053A), usage page 0xFF00 usage 0: the same family two bytes earlier, report 01: query 01 80 08 50 41 08 08
 //   03 <command>, remote mode 01 80 07 50 41 0E 08 02 E1 01 / 00; the answer 01 80 .. 50 49 ..., the command at 13, 01 (an
@@ -68,6 +69,11 @@ public static class RazerHeadsets
     public static BatteryRead? PaBattery(byte[] r)
         => r.Length >= 16 && r[0] == 0x02 && r[2] == 0x50 && r[3] == 0x49 && r[12] == Battery && r[13] == 0x01 && r[14] >= 1 && r[15] is > 0 and <= 100
             ? new(r[15]) : null;
+    // The charging query's answer (command 0x2A): its one data byte non-zero while charging. Asked in the same remote session
+    // right after the level, as HaloBattery's blackshark.py read_battery does.
+    public const byte Charge = 0x2A;
+    public static bool? PaCharging(byte[] r)
+        => r.Length >= 16 && r[0] == 0x02 && r[2] == 0x50 && r[3] == 0x49 && r[12] == Charge && r[13] == 0x01 && r[14] >= 1 ? r[15] != 0 : null;
 
     // ----- Barracuda Pro: PA on report 01 -----
     public static byte[] BarracudaRemote(bool on) => BrandFamilies.Frame(64, 0x01, 0x80, 0x07, 0x50, 0x41, 0x0E, 0x08, 0x02, 0xE1, on ? (byte)1 : (byte)0);
@@ -75,6 +81,9 @@ public static class RazerHeadsets
     public static BatteryRead? BarracudaBattery(byte[] r)
         => r.Length >= 17 && r[0] == 0x01 && r[3] == 0x50 && r[4] == 0x49 && r[13] == Battery && r[14] is 0x01 or 0x02 && r[15] is > 0 and <= 32
             && r[16] is > 0 and <= 100 ? new(r[16]) : null;
+    // Its charging answer, the same way (HaloBattery's barracuda.py: charging = payload[0]).
+    public static bool? BarracudaCharging(byte[] r)
+        => r.Length >= 17 && r[0] == 0x01 && r[3] == 0x50 && r[4] == 0x49 && r[13] == Charge && r[14] is 0x01 or 0x02 && r[15] is > 0 and <= 32 ? r[16] != 0 : null;
 
     // ----- Kraken V4: report 02 with an XOR -----
     public static byte[] KrakenQuery(byte command)
@@ -110,10 +119,10 @@ public static class RazerHeadsets
             return [new BrandWay("razer-headset.status", WayTransport.Feature, StatusRequest(), StatusReads()) { GapMs = 150, Attempts = 2 }];
         if (Pa.Contains(s.Product))
             return [new BrandWay("razer-headset.pa", WayTransport.Output, PaQuery(Battery), PaBattery)
-                { Before = [PaRemote(true), PaRemote(true)], After = [PaRemote(false)], GapMs = 35, TimeoutMs = 700 }];
+                { Before = [PaRemote(true), PaRemote(true)], After = [PaRemote(false)], GapMs = 35, TimeoutMs = 700, Then = PaQuery(Charge), Charging = PaCharging }];
         if (s.Product == BarracudaPro)
             return [new BrandWay("razer-headset.barracuda", WayTransport.Output, BarracudaQuery(Battery), BarracudaBattery)
-                { Before = [BarracudaRemote(true)], After = [BarracudaRemote(false)], GapMs = 50, TimeoutMs = 900 }];
+                { Before = [BarracudaRemote(true)], After = [BarracudaRemote(false)], GapMs = 50, TimeoutMs = 900, Then = BarracudaQuery(Charge), Charging = BarracudaCharging }];
         if (s.Product == KrakenV4)
             return [new BrandWay("razer-headset.kraken", WayTransport.Output, KrakenQuery(Battery), KrakenBattery) { TimeoutMs = 1000 }];
         return [];

@@ -21,6 +21,17 @@ static class BrandsHeadsetTests
 
     public static void Run(Action<string, bool> check)
     {
+        // The PA charging answer, laid out as blackshark.py's parse_reply reads it (constructed): command 2A at 12, ACK 01, length 1,
+        // the flag. Barracuda Pro the same two bytes later.
+        var paCharge = new byte[64]; paCharge[0] = 0x02; paCharge[2] = 0x50; paCharge[3] = 0x49; paCharge[12] = 0x2A; paCharge[13] = 0x01; paCharge[14] = 0x01; paCharge[15] = 0x01;
+        var paLevelReply = (byte[])paCharge.Clone(); paLevelReply[12] = 0x21; paLevelReply[15] = 79;
+        var bcCharge = new byte[64]; bcCharge[0] = 0x01; bcCharge[3] = 0x50; bcCharge[4] = 0x49; bcCharge[13] = 0x2A; bcCharge[14] = 0x01; bcCharge[15] = 0x01; bcCharge[16] = 0x00;
+        check("Razer PA and Barracuda Pro: the charging question (2A) after the level, its answer, and the level answer is not a charging one",
+            BrimDeck.Core.RazerHeadsets.PaQuery(0x2A)[10] == 0x2A && BrimDeck.Core.RazerHeadsets.PaCharging(paCharge) == true
+            && BrimDeck.Core.RazerHeadsets.PaCharging(paLevelReply) is null && BrimDeck.Core.RazerHeadsets.BarracudaCharging(bcCharge) == false
+            && BrandFamilies.Find(new HidShape(0x1532, 0x0555, 0xFF00, 1, -1, 64, 64, 0, new HashSet<byte> { 0x02 }, new HashSet<byte>(), "")) is { } pa
+            && pa.Ways[0].Then is { } then && then[10] == 0x2A && pa.Ways[0].Charging is not null);
+
         Existing(check);
         Razer(check);
         Sony(check);
