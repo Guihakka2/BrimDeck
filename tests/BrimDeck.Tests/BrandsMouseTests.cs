@@ -45,20 +45,25 @@ static class BrandsMouseTests
     private static void Glorious(Action<string, bool> check)
     {
         var receiver = Shape(0x258A, 0x2022, 0xFFFF, 0, input: 0, output: 0, feature: 65, featureIds: [0x00]);
-        check("Glorious: the Model O receiver, the cables and the 4K/8K mice on their 65-byte feature collection take the 0x83 read",
-            Named(receiver, "Glorious", "glorious.f83") && Named(Shape(0x258A, 0x2011, 0xFFA0, 1, feature: 65, featureIds: [0x00]), "Glorious", "glorious.f83")
+        check("Glorious: the Model O and Model D receivers and the 4K/8K mice on their 65-byte feature collection take the 0x83 read",
+            Named(receiver, "Glorious", "glorious.f83") && Named(Shape(0x258A, 0x2023, 0xFFA0, 1, feature: 65, featureIds: [0x00]), "Glorious", "glorious.f83")
             && Named(Shape(0x258A, 0x2036, 0xFFFF, 0, feature: 65, featureIds: [0x00]), "Glorious", "glorious.f83")
+            && Named(Shape(0x258A, 0x201B, 0xFFFF, 0, feature: 65, featureIds: [0x00]), "Glorious", "glorious.f83")
             && BrandFamilies.Find(Shape(0x258A, 0x201B, 0xFFFF, 0, feature: 65, featureIds: [0x00]))!.Value.Family.DisplayName(Shape(0x258A, 0x201B, 0xFFFF)) == "Glorious Model O 2 PRO 4K/8K");
-        check("Glorious: another 258A product, the collection without the feature report, or one numbering another report is not asked",
-            Untaken(Shape(0x258A, 0x2099, 0xFFFF, 0, feature: 65, featureIds: [0x00])) && Untaken(Shape(0x258A, 0x2035, 0xFFFF, 1, feature: 0))
+        check("Glorious: the older mice on their cables (2011, 2012), another 258A product, the collection without the feature report, or one numbering another report is not asked",
+            Untaken(Shape(0x258A, 0x2011, 0xFFA0, 1, feature: 65, featureIds: [0x00])) && Untaken(Shape(0x258A, 0x2012, 0xFFFF, 0, feature: 65, featureIds: [0x00]))
+            && Untaken(Shape(0x258A, 0x2099, 0xFFFF, 0, feature: 65, featureIds: [0x00])) && Untaken(Shape(0x258A, 0x2035, 0xFFFF, 1, feature: 0))
             && BrandFamilies.Find(Shape(0x258A, 0x2022, 0xFFFF, 0, feature: 65, featureIds: [0x05])) is { Ways.Count: 0 });
         check("Glorious: the request is 00 00 00 02 02 00 83 padded to 65 bytes, about 100 ms before the read",
             MouseShapes.Request83().SequenceEqual(Pad(65, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x83)) && Way(receiver, "glorious.f83") is { GapMs: 100, FeatureLength: 65 });
-        check("Glorious: A1 answers read (75 %, charging), A4 is asleep; the request read back, A2, 0 % and 101 % are none",
-            MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x00, 0x4B)) == new BatteryRead(75)
+        check("Glorious: A1 answers read (CORE's capture on a 201B cable: 100 %; 75 %, 1 charging, 2 charged), A4 is asleep; the request read back, A0, A2, 0 % and 101 % are none",
+            MouseShapes.Battery83(Pad(65, [0x00, .. Hex("a1 00 02 02 00 83 00 64")])) == new BatteryRead(100)
+            && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x00, 0x4B)) == new BatteryRead(75)
             && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x01, 0x4B)) == new BatteryRead(75, true)
+            && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x02, 0x64)) == new BatteryRead(100)
             && MouseShapes.Battery83(Pad(65, 0x00, 0xA4, 0, 0, 0, 0, 0x83, 0x00, 0x50)) == new BatteryRead(null, Asleep: true)
-            && MouseShapes.Battery83(MouseShapes.Request83()) is null && MouseShapes.Battery83(Pad(65, 0x00, 0xA2, 0, 0, 0, 0, 0x83, 0x00, 0x50)) is null
+            && MouseShapes.Battery83(MouseShapes.Request83()) is null && MouseShapes.Battery83(Pad(65, 0x00, 0xA2, 0, 0, 0, 0, 0x83, 0x00, 0x00)) is null
+            && MouseShapes.Battery83(Pad(65, 0x00, 0xA0, 0, 0, 0, 0, 0x83, 0x00, 0x50)) is null
             && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x00, 0x00)) is null && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x83, 0x00, 101)) is null
             && MouseShapes.Battery83(Pad(65, 0x00, 0xA1, 0, 0, 0, 0, 0x81, 0x00, 0x50)) is null);
     }
@@ -112,6 +117,13 @@ static class BrandsMouseTests
         check("Darmoshark: 51 06 in 21 bytes, after the bond read 51 03, read back in 21 bytes 120 ms later",
             identity.Request.SequenceEqual(Pad(21, 0x51, 0x06)) && identity.Before.Count == 1 && identity.Before[0].SequenceEqual(Pad(21, 0x51, 0x03))
             && identity is { GapMs: 120, FeatureLength: 21 });
+        var cableIdentity = Way(Shape(0x248A, 0xFF12, 0x008C, 1, 2, feature: 1001, featureIds: [0x51]), "darmoshark.identity");
+        check("Darmoshark: through the receiver, the bond answer still in the buffer with link 0 is the mouse asleep, with link 1 no answer yet; on the cable it is never a reading",
+            identity.Parse(Pad(21, Hex("51 03 01 8A 24 10 FF 00"))) == new BatteryRead(null, Asleep: true)
+            && identity.Parse(Pad(21, Hex("51 03 01 8A 24 10 FF 01"))) is null
+            && identity.Parse(Pad(21, Hex("51 06 01 00 8A 24 10 FF 03 01 09 09 00 00"))) == new BatteryRead(9)
+            && cableIdentity.Parse(Pad(21, Hex("51 03 01 8A 24 10 FF 00"))) is null
+            && cableIdentity.Parse(Pad(21, Hex("51 06 01 00 8A 24 12 FF 09 02 00 4B 01"))) == new BatteryRead(75, true));
         check("Darmoshark: quiet-battery's N3 answer 51 06 01 00 8A 24 10 FF 03 01 09 09 00 00 reads 9 %; the bond answer, the request and a foreign id are none",
             DarmosharkMice.Identity(Pad(21, Hex("51 06 01 00 8A 24 10 FF 03 01 09 09 00 00"))) == new BatteryRead(9)
             && DarmosharkMice.Identity(Pad(21, Hex("51 06 01 00 8A 24 12 FF 09 02 00 4B 01"))) == new BatteryRead(75, true)
@@ -152,11 +164,16 @@ static class BrandsMouseTests
         check("EWEADN: the S9 (M156, 70 %) and the SC580 (M137, 82 %, charging) read; 30 02 01 and online 0 are asleep; the request read back and a broken id are none",
             EweadnMice.Info(Pad(32, Hex("30 00 01 0B 4D 31 35 36 01 22 95 AA 00 46 01"))) == new BatteryRead(70)
             && EweadnMice.Info(Pad(32, Hex("30 00 01 0B 4D 31 33 37 01 22 95 AA 01 52 01"))) == new BatteryRead(82, true)
-            && EweadnMice.Info(Pad(32, 0x30, 0x02, 0x01)) == new BatteryRead(null, Asleep: true)
+            && EweadnMice.Info(Pad(32, 0x30, 0x02, 0x01)) == new BatteryRead(null, Asleep: true) && EweadnMice.Info(Pad(32, 0x30, 0x02)) == new BatteryRead(null, Asleep: true)
             && EweadnMice.Info(Pad(32, Hex("30 00 01 0B 4D 31 33 37 01 22 95 AA 00 52 00"))) == new BatteryRead(null, Asleep: true)
             && EweadnMice.Info(EweadnMice.IdentifyRequest()[1..]) is null && EweadnMice.Info(EweadnMice.InfoRequest()[1..]) is null
             && EweadnMice.Info(Pad(32, Hex("30 00 01 0B 00 00 00 00 01 22 95 AA 00 46 01"))) is null
             && EweadnMice.Info(Pad(32, Hex("30 00 01 0B 4D 31 35 36 01 22 95 AA 00 65 01"))) is null);
+        var cable = Way(Shape(0x088D, 0x062E, 0xFF01, 0x10, input: 33, output: 33, outputIds: [0x00]), "eweadn.info");
+        check("EWEADN: on its cable the mouse reads charging whatever its flag; asleep stays asleep; through the receiver the flag stands",
+            cable.Parse(Pad(32, Hex("30 00 01 0B 4D 31 35 36 01 22 95 AA 00 46 01"))) == new BatteryRead(70, true)
+            && cable.Parse(Pad(32, 0x30, 0x02)) == new BatteryRead(null, Asleep: true)
+            && Way(hub, "eweadn.info").Parse(Pad(32, Hex("30 00 01 0B 4D 31 35 36 01 22 95 AA 00 46 01"))) == new BatteryRead(70));
         var beiyin = Shape(0x372E, 0x1026, 0xFF00, 0x01, input: 0, output: 0, feature: 64, featureIds: [0x03]);
         check("EWEADN: the beiyin S9 receiver's feature collection takes the basics read; its 0xFF06 collection is not asked",
             Named(beiyin, "EWEADN mouse", "eweadn.beiyin") && Untaken(Shape(0x372E, 0x1026, 0xFF06, 0x01, input: 31, output: 63, outputIds: [0x09])));
@@ -164,10 +181,11 @@ static class BrandsMouseTests
         check("EWEADN: 03 22 50 00 02 4F 81 padded to 64 bytes (0x22 the sum of the bytes after it), read back 20 ms later",
             request.Length == 64 && request.Take(7).SequenceEqual(new byte[] { 0x03, 0x22, 0x50, 0x00, 0x02, 0x4F, 0x81 }) && Zeros(request, 7)
             && Way(beiyin, "eweadn.beiyin") is { GapMs: 20, FeatureLength: 64 });
-        check("EWEADN: vigil-watt's answer 03 50 00 0B 02 01 49 .. reads 73 % (C9: charging); a sleeping 0, the request and the residue 03 00 02 are none",
+        check("EWEADN: vigil-watt's answer 03 50 00 0B 02 01 49 .. reads 73 % (C9: charging), a sleeping 0 is asleep; the request, the residue 03 00 02 and 80 (0 % charging) are none",
             EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 49 21 07 01 90 65 04 A5 5A 00"))) == new BatteryRead(73)
             && EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 C9 21 07 01 90 65 04 A5 5A 00"))) == new BatteryRead(73, true)
-            && EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 00 21 07 01 90 65 04 A5 5A 00"))) is null
+            && EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 00 21 07 01 90 65 04 A5 5A 00"))) == new BatteryRead(null, Asleep: true)
+            && EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 80"))) is null && EweadnMice.Beiyin(Pad(64, Hex("03 50 01 0B 02 01 49"))) is null
             && EweadnMice.Beiyin(request) is null && EweadnMice.Beiyin(Hex("03 00 02 00 00")) is null
             && EweadnMice.Beiyin(Pad(64, Hex("03 50 00 0B 02 01 7F"))) is null);
     }
@@ -183,9 +201,10 @@ static class BrandsMouseTests
         check("AULA: the echoed header with 4E reads 78 %; the request read back (0 there), another command and 101 % are none",
             AulaMice.Sc380(Pad(520, Hex("09 0C 09 01 01 00 01 00 4E"))) == new BatteryRead(78) && AulaMice.Sc380(Pad(520, AulaMice.Sc380Request())) is null
             && AulaMice.Sc380(Pad(520, Hex("09 0B 07 00 01 00 01 00 01"))) is null && AulaMice.Sc380(Pad(520, Hex("09 0C 09 01 01 00 01 00 65"))) is null);
-        var l9 = Shape(0x38A6, 0x28FD, 0xFFA8, 0x01, input: 64, output: 64, outputIds: [0x0B]);
-        check("AULA: the L9 Ultra receiver's 0xFFA8 collection takes the status read; AULA G9's 38A6:0030 stays with its listener",
-            Named(l9, "AULA mouse", "aula.l9") && Named(Shape(0x38A6, 0x28FD, 0xA8FF, 0x01, input: 64, output: 64, outputIds: [0x0B]), "AULA mouse", "aula.l9")
+        var l9 = Shape(0x38A6, 0x28FD, 0xFFA8, 0x02, input: 64, output: 64, outputIds: [0x0B]);
+        check("AULA: the L9 Ultra receiver's 0xFFA8 / 2 collection takes the status read; another usage, and AULA G9's 38A6:0030 (its listener's), are not asked",
+            Named(l9, "AULA mouse", "aula.l9") && Named(Shape(0x38A6, 0x28FD, 0xA8FF, 0x0200, input: 64, output: 64, outputIds: [0x0B]), "AULA mouse", "aula.l9")
+            && Untaken(Shape(0x38A6, 0x28FD, 0xFFA8, 0x01, input: 64, output: 64, outputIds: [0x0B]))
             && Untaken(Shape(0x38A6, 0x0030, 0xFFAB, 0x01)) && Untaken(Shape(0x38A6, 0x28FD, 0xFF02, 0x02, input: 64, output: 64, outputIds: [0x0B])));
         var charging = Pad(32, 0x0A, 0x81); charging[17] = 0x01; charging[18] = 0x40;
         var empty = Pad(32, 0x0A, 0x81); empty[17] = 0x01;
@@ -218,11 +237,19 @@ static class BrandsMouseTests
         check("HyperX: the headsets on the same vendor ids (Cloud Flight, Cloud Alpha, Cloud Flight 2) and another collection are not asked",
             Untaken(Shape(0x0951, 0x16C4, 0xFF00, 0x01, input: 65, output: 65, outputIds: [0x00])) && Untaken(Shape(0x03F0, 0x098D, 0xFF00, 0x01, input: 65, output: 65, outputIds: [0x00]))
             && Untaken(Shape(0x03F0, 0x0AC1, 0xFF90, 0x01)) && Untaken(Shape(0x03F0, 0x028E, 0xFF01, 0x01, input: 65, output: 65, outputIds: [0x00])));
-        check("HyperX: the heartbeat is 51 after report id 0 (its answer read without it), the battery query 50 02",
-            HyperXMice.HeartbeatRequest().SequenceEqual(Pad(65, 0x00, 0x51)) && Way(haste, "hyperx.heartbeat") is { StripZero: true }
-            && HyperXMice.Battery2Request().SequenceEqual(new byte[] { 0x50, 0x02 }));
-        check("HyperX: the Dart's heartbeat layout 51 00 00 03 <50> 01 0F 8B 10 reads 80 % charging; a wired 0 or FF and the request read back are none",
-            HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 50 01 0F 8B 10 02 40"))) == new BatteryRead(80, true)
+        var heartbeat = Way(haste, "hyperx.heartbeat");
+        check("HyperX: the heartbeat is 51 after report id 0 (its answer read without it), asked after the connection 46; the battery query 50 02 after the link 52 01 where 0x52 is declared",
+            HyperXMice.HeartbeatRequest().SequenceEqual(Pad(65, 0x00, 0x51)) && heartbeat is { StripZero: true } && heartbeat.Gate!.SequenceEqual(Pad(65, 0x00, 0x46))
+            && HyperXMice.Battery2Request().SequenceEqual(new byte[] { 0x50, 0x02 }) && Way(haste2, "hyperx.battery").Gate is null
+            && Way(Shape(0x03F0, 0x0D97, 0xFF00, 0x01, 2, input: 64, output: 64, outputIds: [0x50, 0x52]), "hyperx.battery").Gate!.SequenceEqual(new byte[] { 0x52, 0x01 }));
+        check("HyperX: NGenuity's connection answers: 46 00 00 01 01 linked, 46 00 00 01 00 not (asleep), 46 00 00 02 the cable; Haste 2's 53 01 01 linked, 53 01 00 not; other frames none",
+            heartbeat.Gated!(Pad(64, Hex("46 00 00 01 01"))) == true && heartbeat.Gated(Pad(64, Hex("46 00 00 01 00"))) == false
+            && heartbeat.Gated(Pad(64, Hex("46 00 00 02 EC 00"))) == true && heartbeat.Gated(Pad(64, Hex("51 00 00 03 62 01"))) is null
+            && heartbeat.Gated(Pad(64, Hex("46 00 00 05 01"))) is null
+            && HyperXMice.Linked(Pad(64, 0x53, 0x01, 0x01)) == true && HyperXMice.Linked(Pad(64, 0x53, 0x01, 0x00)) == false && HyperXMice.Linked(Pad(64, 0x51, 0x02, 0x50)) is null);
+        check("HyperX: santeri3700's capture 51 00 00 03 62 01 0F 66 10 00 40 reads 98 % charging; 51 00 00 03 <50> 01 0F 8B 10 80 %; a wired 0 or FF and the request read back are none",
+            HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 62 01 0F 66 10 00 40"))) == new BatteryRead(98, true)
+            && HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 50 01 0F 8B 10 02 40"))) == new BatteryRead(80, true)
             && HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 3C 00 0F 8B 10"))) == new BatteryRead(60)
             && HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 00 01"))) is null && HyperXMice.HeartbeatBattery(Pad(64, Hex("51 00 00 03 FF 02"))) is null
             && HyperXMice.HeartbeatBattery(Pad(64, 0x51)) is null);
@@ -253,15 +280,23 @@ static class BrandsMouseTests
             && FinalmouseMice.Status(Pad(64, 0x05, 0x05, 0x26, 0x03, 0xFF, 0x00, 0x00)) is null && FinalmouseMice.Voltage(Pad(64, 0x05, 0x04, 0x05, 0x02, 0x00, 0x00)) is null
             && FinalmouseMice.Voltage(Pad(64, 0x05, 0x03, 0x12, 0x01, 0x01)) is null && FinalmouseMice.Voltage(Pad(64, 0x04, 0x02, 0x85, 0x00)) is null
             && FinalmouseMice.Voltage(Pad(64, 0x05, 0x04, 0x05, 0x02, 0xB8, 0x0B)) is null);
+        check("Finalmouse: a frame whose length does not match its payload, and millivolts outside 2500 to 4600 (4700, 2400), are none",
+            FinalmouseMice.Voltage(Pad(64, 0x05, 0x05, 0x05, 0x02, 0x64, 0x10)) is null && FinalmouseMice.Status(Pad(64, 0x05, 0x04, 0x26, 0x03, 0x50, 0x2C, 0x10)) is null
+            && FinalmouseMice.Voltage(Pad(64, 0x05, 0x04, 0x05, 0x02, 0x5C, 0x12)) is null && FinalmouseMice.Voltage(Pad(64, 0x05, 0x04, 0x05, 0x02, 0x60, 0x09)) is null
+            && FinalmouseMice.Voltage(Pad(64, 0x05, 0x04, 0x05, 0x02, 0xF8, 0x11)) == new BatteryRead(100, Coarse: true));
     }
 
     private static void Incott(Action<string, bool> check)
     {
-        check("Incott: the 8K's receiver and cable on 0xFF05 (either byte order) are listened to, nothing sent; other PixArt products are not",
-            Named(Shape(0x093A, 0x522C, 0xFF05, 0x01, 3, input: 9), "Incott", "incott.listen") && Named(Shape(0x093A, 0x622C, 0x05FF, 0x01, 2, input: 9), "Incott", "incott.listen")
-            && Untaken(Shape(0x093A, 0x2510, 0xFF05, 0x01, input: 9)) && Untaken(Shape(0x093A, 0x522C, 0x0001, 0x02)));
-        check("Incott: OpenMouse's captures 09 5F 10 04 .. (95 %) and 09 E1 10 04 .. (97 % charging) read; 0, 101 to 128 and another report are none",
+        var receiver = Shape(0x093A, 0x522C, 0xFF05, 0x01, 3, input: 9);
+        check("Incott: the 8K's receiver and cable on 0xFF05 / 1 (either byte order) are listened to, nothing sent, named by their product string; other PixArt products and usages are not",
+            Named(receiver, "Incott", "incott.listen") && Named(Shape(0x093A, 0x622C, 0x05FF, 0x0100, 2, input: 9), "Incott", "incott.listen")
+            && BrandFamilies.Find(receiver)!.Value.Family.DisplayName(receiver) is null
+            && Untaken(Shape(0x093A, 0x2510, 0xFF05, 0x01, input: 9)) && Untaken(Shape(0x093A, 0x522C, 0x0001, 0x02)) && Untaken(Shape(0x093A, 0x522C, 0xFF05, 0x02, 3, input: 9)));
+        check("Incott: OpenMouse's captures 09 5F 10 04 .. (95 %) and 09 E1 10 04 .. (97 % charging) read, also zero-padded to 33; 0, 101 to 128, bytes after the eighth and another report are none",
             IncottMice.Battery(Hex("09 5F 10 04 00 0F 0F 10")) == new BatteryRead(95) && IncottMice.Battery(Hex("09 E1 10 04 00 0F 0F 10")) == new BatteryRead(97, true)
+            && IncottMice.Battery(Pad(33, Hex("09 5F 10 04 00 0F 0F 10"))) == new BatteryRead(95)
+            && IncottMice.Battery(Pad(33, Hex("09 5F 10 04 00 0F 0F 10 01"))) is null
             && IncottMice.Battery(Hex("09 00 10 04")) is null && IncottMice.Battery(Hex("09 70 10 04")) is null && IncottMice.Battery(Hex("09 80 10 04")) is null
             && IncottMice.Battery(Hex("01 5F 10 04")) is null);
     }
@@ -274,7 +309,11 @@ static class BrandsMouseTests
         check("Ryunix: the wired XS capture 04 01 02 01 64 02 .. reads 100 % (full, not charging), 04 01 02 04 54 01 84 % charging; a bad polling code, status 3 or another report are none",
             RyunixMice.Battery(Hex("04 01 02 01 64 02 00 00 01 20")) == new BatteryRead(100) && RyunixMice.Battery(Hex("04 01 02 04 54 01 02")) == new BatteryRead(84, true)
             && RyunixMice.Battery(Hex("04 01 02 03 32 00 01")) is null && RyunixMice.Battery(Hex("04 01 02 04 32 03 01")) is null
-            && RyunixMice.Battery(Hex("01 01 02 04 32 00 01")) is null && RyunixMice.Battery(Hex("04 01 02 04 00 00 01")) is null);
+            && RyunixMice.Battery(Hex("01 01 02 04 32 00 01")) is null && RyunixMice.Battery(Hex("04 01 02 04 00 00 01")) is null
+            && RyunixMice.Battery(Hex("04 02 02 04 32 00 01")) is null && RyunixMice.Battery(Hex("04 01 02 04 65 00 01")) is null);
+        check("Ryunix: active 0 (the receiver's mouse not connected) is asleep whatever level it carries; a malformed one is still none",
+            RyunixMice.Battery(Hex("04 00 02 01 37 00 00 00 01 20")) == new BatteryRead(null, Asleep: true)
+            && RyunixMice.Battery(Hex("04 00 02 01 00 00 00")) == new BatteryRead(null, Asleep: true) && RyunixMice.Battery(Hex("04 00 02 03 37 00 00")) is null);
     }
 
     private static void Redragon(Action<string, bool> check)
@@ -283,8 +322,14 @@ static class BrandsMouseTests
         check("Redragon: the M690 PRO's receiver and cable on 0xFF00 / 1 take the status read; the M719 PRO and another 258A product are not asked",
             Named(receiver, "Redragon mouse", "redragon.m690") && Named(Shape(0x258A, 0x002E, 0x00FF, 0x0100, 1, feature: 520, featureIds: [0x05, 0x08]), "Redragon mouse", "redragon.m690")
             && Untaken(Shape(0x258A, 0x0049, 0xFF00, 0x01, feature: 520, featureIds: [0x05])) && Untaken(Shape(0x258A, 0x002F, 0xFF01, 0x01, feature: 520, featureIds: [0x05])));
-        check("Redragon: 05 90 padded to 8 bytes and read back in exactly 8, 60 ms later",
-            RedragonMice.Request().SequenceEqual(Pad(8, 0x05, 0x90)) && Way(receiver, "redragon.m690") is { FeatureLength: 8, GapMs: 60 });
+        var cable = Shape(0x258A, 0x002E, 0xFF00, 0x01, 1, feature: 520, featureIds: [0x05, 0x08]);
+        check("Redragon: 05 90 padded to 8 bytes and read back in exactly 8, 60 ms later; the receiver is asked the link 05 80 first, the cable is not",
+            RedragonMice.Request().SequenceEqual(Pad(8, 0x05, 0x90)) && Way(receiver, "redragon.m690") is { FeatureLength: 8, GapMs: 60 }
+            && Way(receiver, "redragon.m690").Gate!.SequenceEqual(Pad(8, 0x05, 0x80)) && Way(cable, "redragon.m690").Gate is null);
+        check("Redragon: the link answer 05 80 01 01 is linked, 05 80 00 01 and 05 80 00 02 the mouse off or asleep; another answer is none",
+            RedragonMice.Linked(Hex("05 80 01 01 00 00 00 00")) == true && RedragonMice.Linked(Hex("05 80 00 01 00 00 00 00")) == false
+            && RedragonMice.Linked(Hex("05 80 00 02 00 00 00 00")) == false && RedragonMice.Linked(Hex("05 90 11 64 00 00 00 00")) is null
+            && RedragonMice.Linked(Hex("05 80 07 00 00 00 00 00")) is null);
         check("Redragon: 05 90 11 64 reads 100 %, 05 90 10 01 charging without a level, 05 90 10 02 full; the request read back and another command are none",
             RedragonMice.Battery(Hex("05 90 11 64 00 00 00 00")) == new BatteryRead(100) && RedragonMice.Battery(Hex("05 90 11 63 00 00 00 00")) == new BatteryRead(99)
             && RedragonMice.Battery(Hex("05 90 10 01 00 00 00 00")) == new BatteryRead(null, true) && RedragonMice.Battery(Hex("05 90 10 02 00 00 00 00")) == new BatteryRead(100)
@@ -305,9 +350,11 @@ static class BrandsMouseTests
             && ScyroxMice.ProfileRequest().Length == 64 && ScyroxMice.ProfileRequest()[1] == 0x01 && ScyroxMice.ProfileRequest()[63] == 0x09);
         var measured = Pad(64, Hex("08 2E 00 03 32 01 01 03 00 03 00 08 00 00 0B")); measured[63] = 0x86;
         var broken = (byte[])measured.Clone(); broken[63] = 0x87;
-        var unlinked = Pad(64, Hex("08 2E 00 03 32 00 00")); unlinked[63] = (byte)unlinked.Take(63).Sum(b => b);
-        check("Scyrox: ScyroxTray's measured answer (checksum 86) reads 50 % charging; a wrong checksum, the request read back and an unlinked mouse are none",
-            ScyroxMice.Status(measured) == new BatteryRead(50, true) && ScyroxMice.Status(broken) is null && ScyroxMice.Status(status) is null && ScyroxMice.Status(unlinked) is null);
+        var unlinked = Pad(64, Hex("08 2E 00 03 00 00 00 03 00 03 00 08 00 00 0B")); unlinked[63] = (byte)unlinked.Take(63).Sum(b => b);
+        var linkTwo = Pad(64, Hex("08 2E 00 03 32 00 02")); linkTwo[63] = (byte)linkTwo.Take(63).Sum(b => b);
+        check("Scyrox: ScyroxTray's measured answer (checksum 86) reads 50 % charging, an unlinked mouse (linked 0, 0 %) is asleep; a wrong checksum, the request sent back and linked 2 are none",
+            ScyroxMice.Status(measured) == new BatteryRead(50, true) && ScyroxMice.Status(unlinked) == new BatteryRead(null, Asleep: true)
+            && ScyroxMice.Status(broken) is null && ScyroxMice.Status(status) is null && ScyroxMice.Status(linkTwo) is null);
         var profile = Pad(64, 0x08, 0x01, 0x00, 0x01, 0x02, 0x02, 0x00, 0x03); profile[20] = 0x3C;
         var stale = (byte[])profile.Clone(); stale[62] = 0x01;
         check("Scyrox: a V12M profile answer reads 20 (60 %); the request read back and one flagged at 62 are none",
@@ -316,18 +363,24 @@ static class BrandsMouseTests
 
     private static void Pulsar(Action<string, bool> check)
     {
-        var receiver = Shape(0x3710, 0x5403, 0xFF00, 0x01, 3, input: 0, output: 0, feature: 65, featureIds: [0x00]);
-        check("Pulsar: the X2 V3 Mini's receiver and cable on interface 3 take the Sonix read; the X2 CrazyLight Mini (Compx) and other interfaces are not asked",
-            Named(receiver, "Pulsar", "pulsar.sonix") && Named(Shape(0x3710, 0x3402, 0x00FF, 0x01, 3, feature: 65, featureIds: [0x00]), "Pulsar", "pulsar.sonix")
-            && Untaken(Shape(0x3710, 0x5406, 0xFF02, 0x02, 1, 17, 17)) && Untaken(Shape(0x3710, 0x5403, 0xFF00, 0x01, 1, feature: 65, featureIds: [0x00]))
+        var receiver = Shape(0x3710, 0x5403, 0xFFFF, 0x01, 3, input: 0, output: 0, feature: 65, featureIds: [0x00]);
+        var cable = Shape(0x3710, 0x3402, 0xFFFF, 0x0100, 3, feature: 65, featureIds: [0x00]);
+        check("Pulsar: the X2 V3 Mini's receiver and cable on interface 3, 0xFFFF / 1, take the Sonix read; the X2 CrazyLight Mini (Compx), other interfaces and collections are not asked",
+            Named(receiver, "Pulsar", "pulsar.sonix") && Named(cable, "Pulsar", "pulsar.sonix")
+            && Untaken(Shape(0x3710, 0x5406, 0xFF02, 0x02, 1, 17, 17)) && Untaken(Shape(0x3710, 0x5403, 0xFFFF, 0x01, 1, feature: 65, featureIds: [0x00]))
+            && Untaken(Shape(0x3710, 0x5403, 0xFF00, 0x01, 3, feature: 65, featureIds: [0x00])) && Untaken(Shape(0x3710, 0x5403, 0xFFFF, 0x02, 3, feature: 65, featureIds: [0x00]))
             && Untaken(Shape(0x3710, 0x5403, 0x0001, 0x02, 3, feature: 65)));
         var request = PulsarMice.Request();
         check("Pulsar: 00 | 00 08 81 01, zeros, 8A 00 (the 16-bit sum) in the last two bytes, read back 50 ms later",
             request.Length == 65 && request.Take(5).SequenceEqual(new byte[] { 0x00, 0x00, 0x08, 0x81, 0x01 }) && request[63] == 0x8A && request[64] == 0x00
             && Zeros(request[..63], 5) && Way(receiver, "pulsar.sonix") is { GapMs: 50, FeatureLength: 65 });
-        check("Pulsar: 00 00 08 81 01 .. .. 41 reads 65 %; the request read back, another command and 101 % are none",
-            PulsarMice.Battery(Pad(65, 0x00, 0x00, 0x08, 0x81, 0x01, 0x00, 0x00, 0x41)) == new BatteryRead(65) && PulsarMice.Battery(request) is null
-            && PulsarMice.Battery(Pad(65, 0x00, 0x00, 0x08, 0x85, 0x03, 0x00, 0x00, 0x41)) is null && PulsarMice.Battery(Pad(65, 0x00, 0x00, 0x08, 0x81, 0x01, 0x00, 0x00, 0x65)) is null);
+        check("Pulsar: HaloBattery #213's reply 00 01 08 81 01 00 00 18 reads 24 % (charging on the cable); the request read back, one with 00 first, another command and 101 % are none",
+            PulsarMice.Battery(Pad(65, Hex("00 01 08 81 01 00 00 18"))) == new BatteryRead(24)
+            && Way(receiver, "pulsar.sonix").Parse(Pad(65, Hex("00 01 08 81 01 00 00 18"))) == new BatteryRead(24)
+            && Way(cable, "pulsar.sonix").Parse(Pad(65, Hex("00 01 08 81 01 00 00 18"))) == new BatteryRead(24, true)
+            && Way(cable, "pulsar.sonix").Parse(request) is null && PulsarMice.Battery(request) is null
+            && PulsarMice.Battery(Pad(65, 0x00, 0x00, 0x08, 0x81, 0x01, 0x00, 0x00, 0x41)) is null
+            && PulsarMice.Battery(Pad(65, 0x00, 0x01, 0x08, 0x85, 0x03, 0x00, 0x00, 0x41)) is null && PulsarMice.Battery(Pad(65, 0x00, 0x01, 0x08, 0x81, 0x01, 0x00, 0x00, 0x65)) is null);
     }
 
     // The pairs other readers have (Dongles.Find, Pushes.Find, the headsets) are taken by no mouse family.

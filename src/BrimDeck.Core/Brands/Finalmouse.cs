@@ -6,12 +6,15 @@ namespace BrimDeck.Core;
 // answers come back on input report 0x05: <length> <command> <payload length> <payload> (the command's high bit masked).
 // Command 38 (battery status) answers the state of charge, 0 to 100, and the millivolts; command 5 the millivolts alone,
 // which XPanel turns into a percent by its discharge curve (volts 3.0, 3.62, 3.66, 3.74, 3.88, 4.17, 4.38 for 0.2, 5, 10,
-// 25, 50, 75 and 100 %, a line between the points, rounded). The UltralightX's dongle (0100) measured by HaloBattery never
-// answered command 38, so its reading is the voltage's (coarse, and read high while the mouse charges: command 37's
-// charging flag is a second request, not sent). The mouse on its cable (0102) only takes firmware updates and is not sent
-// to; the Starlight X dongles use output report 0x01 (OpenMouse, unverified) and so never declare report 0x04.
-// From HaloBattery's finalmouse.py (MIT; measured on a 361D:0100 dongle: 0x1064 = 4196 mV, 78 %) and OpenMouse's Finalmouse
-// module (AGPL; facts only: the same curve and report ids).
+// 25, 50, 75 and 100 %, a line between the points, rounded); millivolts outside 2500 to 4600 are no reading (MouseDock). The
+// UltralightX's dongle (0100) measured by HaloBattery never answered command 38, so its reading is the voltage's (coarse,
+// and read high while the mouse charges: command 37's charging flag is a second request, not sent). Command 36 (link
+// state, 0 while the mouse is not connected) is not asked first: MouseDock finds the UltralightX's dongle may not answer
+// it, and an unanswered first question would stop the read. The mouse on its cable (0102) only takes firmware updates and
+// is not sent to; the Starlight X dongles use output report 0x01 (OpenMouse and MouseDock) and so never declare report
+// 0x04. From HaloBattery's finalmouse.py (MIT; measured on a 361D:0100 dongle: 0x1064 = 4196 mV, 78 %), MouseDock's
+// Finalmouse reader (MIT; the frame checks and the voltage bounds) and OpenMouse's Finalmouse module (AGPL; facts only:
+// the same curve and report ids).
 [BrandFamilies]
 public static class FinalmouseMice
 {
@@ -22,7 +25,7 @@ public static class FinalmouseMice
     // The payload of an answer to the command, or null.
     private static ReadOnlySpan<byte> Payload(byte[] r, byte command)
     {
-        if (r.Length < 4 || r[0] != 0x05 || (r[2] & 0x7F) != command || r.Length < 4 + r[3]) return default;
+        if (r.Length < 4 || r[0] != 0x05 || (r[2] & 0x7F) != command || r[1] != r[3] + 2 || r.Length < 4 + r[3]) return default;
         return r.AsSpan(4, r[3]);
     }
     public static BatteryRead? Status(byte[] r)
@@ -33,7 +36,9 @@ public static class FinalmouseMice
     public static BatteryRead? Voltage(byte[] r)
     {
         var payload = Payload(r, BatteryVoltage);
-        return payload.Length >= 2 && Percent(payload[0] | payload[1] << 8) is int percent and > 0 ? new(percent, Coarse: true) : null;
+        if (payload.Length < 2) return null;
+        int millivolts = payload[0] | payload[1] << 8;
+        return millivolts is >= 2500 and <= 4600 && Percent(millivolts) is int percent and > 0 ? new(percent, Coarse: true) : null;
     }
 
     private static readonly double[] Volts = [3.0, 3.62, 3.66, 3.74, 3.88, 4.17, 4.38];
