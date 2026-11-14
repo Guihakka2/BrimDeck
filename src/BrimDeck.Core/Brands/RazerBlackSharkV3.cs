@@ -7,10 +7,13 @@ namespace BrimDeck.Core;
 // charging, 0x02 the first wake), 0x00 (a request), 0x01 (a reply) or 0x02 (a push) at 11, the argument count at 12, the value
 // at 13, and the XOR of bytes 0 to 61 at 62. A value of 0xFF is "not ready" (the link not up yet). Synapse sends two wake
 // frames (class 02, then 2A, direction 00) and the charging query before the battery query, and so does this read; the
-// answers come as input reports. From HaloBattery's blackshark_v3.py (MIT; after a Synapse capture of this dongle showing 97 %:
-// 02 02 60 00 00 00 05 00 00 80 21 01 01 61 ... A5). The dongle resets its radio link when asked often (OpenRazer's daemon,
-// asking every 2 seconds, kept resetting it; the driver's author advises minutes between queries): one read in five minutes,
-// the last reading standing between, and a single try.
+// answers come as input reports. The charging answer is not read (it comes before the battery query, and the battery's read
+// starts with the input reports flushed), so the reading has no charging state. A link-up push (class 0x20) is no reading.
+// From HaloBattery's blackshark_v3.py (MIT; after a Synapse capture of this dongle on Windows showing 97 %, so the page as
+// is: 02 02 60 00 00 00 05 00 00 80 21 01 01 61 ... A5). The dongle resets its radio link when asked often (OpenRazer's
+// daemon, asking every 2 seconds, kept resetting it; the driver's author advises minutes between queries): one read in five
+// minutes, the last reading standing between, and a single try. A switched-off headset does not answer (Windows gives no
+// other sign of it).
 [BrandFamilies]
 public static class RazerBlackSharkV3
 {
