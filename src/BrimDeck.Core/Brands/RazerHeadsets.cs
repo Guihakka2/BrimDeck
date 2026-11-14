@@ -25,7 +25,7 @@ namespace BrimDeck.Core;
 //   one frame at a time, so only the level (0x21) is asked. vigil-watt's RazerKrakenCodec.cs (MIT; measured by its
 //   contributor: 02 02 60 00 00 00 05 00 80 80 21 01 01 3F .. 79, 63 %).
 // Not taken: the Barracuda X 2022 (0552) speaks Airoha RACE behind an app-mode switch with no documented undo and gives only a
-// voltage; the BlackShark V3 (057A) resets its radio link when polled often, and nothing here limits how often a read is sent.
+// voltage. The BlackShark V3 (057A), read at most every five minutes, is RazerBlackSharkV3.
 [BrandFamilies]
 public static class RazerHeadsets
 {

@@ -11,8 +11,7 @@ namespace BrimDeck.Core;
 // - INZONE Buds (0EC2, usage page 0xFF04 usage 1): the dongle sends report 02 12 04 on its own, the right bud's percent at
 //   14, the left's at 16, the case's at 18, and (14 + 16 + 117) mod 256 at 19; nothing is sent to it. The lower of the two
 //   buds is the reading (as HeadsetControl's sony_inzone_buds.hpp reports it; GPL, facts only); the case is not given.
-// Not read: the INZONE H9 (0E53) speaks the same commands over a serial port; the PULSE Explore (0ECC, 0ED0) is read with a
-// GET_FEATURE of report B0 alone, and every feature read here is a set followed by a get.
+// Not read: the INZONE H9 (0E53) speaks the same commands over a serial port. The PULSE Explore is SonyPulse.
 [BrandFamilies]
 public static class SonyInzone
 {

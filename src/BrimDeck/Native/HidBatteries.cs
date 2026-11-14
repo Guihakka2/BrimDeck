@@ -878,15 +878,17 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
 
     // One read as its family declares it (BrandWay): its frames before, its gate, the request and the answer, its frames after.
     // Null when it was not answered; a report the collection refuses throws (Family counts it as not answered).
-    private static readonly Dictionary<string, (long At, BatteryRead Read)> Spaced = new(StringComparer.OrdinalIgnoreCase);
+    // A read with MinIntervalMs: asked once in that time, answered or not; between, its last answer stands (none if it gave none).
+    private static readonly Dictionary<string, (long At, BatteryRead? Read)> Spaced = new(StringComparer.OrdinalIgnoreCase);
     private static BatteryRead? Run(HidInfo info, BrandWay way)
     {
         string spacedKey = info.Path + "|" + way.Name;
         if (way.MinIntervalMs > 0)
             lock (Spaced)
                 if (Spaced.TryGetValue(spacedKey, out var last) && Environment.TickCount64 - last.At < way.MinIntervalMs) return last.Read;
-        var read = RunNow(info, way);
-        if (way.MinIntervalMs > 0 && read is { } fresh) lock (Spaced) Spaced[spacedKey] = (Environment.TickCount64, fresh);
+        BatteryRead? read = null;
+        try { read = RunNow(info, way); }
+        finally { if (way.MinIntervalMs > 0) lock (Spaced) Spaced[spacedKey] = (Environment.TickCount64, read); }
         return read;
     }
 

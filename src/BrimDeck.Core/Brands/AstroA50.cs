@@ -6,8 +6,7 @@ namespace BrimDeck.Core;
 // answer 02 0C 06 00 06 00 <percent> <level> <docked or charging>, and the base also sends it on its own when the state
 // changes. HeadsetControl's logitech_astro_a50.hpp (GPL; facts only; verified on a base station). The GET read back has a
 // length of 3 and is no reading.
-// Not read: the Gen 4 (9886:002C) keeps serving the last level after the headset is switched off, and only a second query
-// (0x54, the link) tells; one read here is one request.
+// The Gen 4 (9886:002C), which needs the link asked first, is AstroA50Gen4.
 [BrandFamilies]
 public static class AstroA50
 {
