@@ -1198,7 +1198,7 @@ public static class Dongles
     public enum Protocol
     {
         BitMouse, Compx, Vgn, Endgame, Vaxee, Inphic, Mchose, Ajazz, CompxFramed, F83, Nordic, MchoseRealtek, Gmouse, Lingbao, Nzxt, Cherry, Hecate,
-        Asus, SteelSeries, RapooGen1, Aula, MchoseKeyboard, CompxSplit
+        Asus, SteelSeries, RapooGen1, Aula, MchoseKeyboard, CompxSplit, AtkSerial
     }
 
     // The Compx receivers atkctl documents (the ATK A9 Ultra), by vendor, product and usage page.
@@ -1249,6 +1249,10 @@ public static class Dongles
         if (SteelSeriesMice.Find(vendor, product) is { } mouse) return SteelSeriesMice.Collection(mouse, iface, usagePage, outputLength) ? Protocol.SteelSeries : null;
         if (vendor == RapooVendor && RapooGen1Products.Contains(product)) return usagePage >= 0xFF00 && outputLength >= 33 ? Protocol.RapooGen1 : null;
         if (vendor == AtkVendor && usagePage == 0xFF05) return Protocol.BitMouse;
+        // ATK's N9 Pro and N9 Ultra: their consumer collection (the one ATK HUB lists them by) only finds the device; nothing is
+        // sent to it, the battery being read on the device's serial port (AtkHeadsets.SerialRequest).
+        if (vendor == AtkVendor && AtkHeadsets.SerialProducts.Any(p => p.Product == product))
+            return usagePage == 0x000C && usage == 0x0001 ? Protocol.AtkSerial : null;
         if (CompxVerified.Contains((vendor, product, usagePage))) return Protocol.Compx;
         if (vendor == VgnVendor && usagePage == 0xFF1C && product == 0x5088) return Protocol.Vgn;
         // ATK's keyboards on the same page, answered with VGN's frame (AtkKeyboards): the measured Z87 Pro and the receivers ATK

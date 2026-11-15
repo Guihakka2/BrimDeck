@@ -762,6 +762,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             Dongles.Protocol.RapooGen1 => RapooGen1,
             Dongles.Protocol.Aula => Aula,
             Dongles.Protocol.MchoseKeyboard => MchoseKeyboard,
+            Dongles.Protocol.AtkSerial => AtkSerial,
             Dongles.Protocol.CompxSplit => CompxSplit,
             _ => null
         };
@@ -1222,6 +1223,20 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         => Feature(info, claimed, "nordic", "Ninjutso Sora V2", Dongles.NordicRequest(32), 90, Dongles.NordicBattery);
     private static IEnumerable<DeviceBattery> Lingbao(HidInfo info, HashSet<string> claimed)
         => Feature(info, claimed, "lingbao", "LINGBAO M5PRO Max", Dongles.LingbaoRequest(), 50, Dongles.LingbaoBattery);
+
+    // ATK's N9 Pro and N9 Ultra: read on the serial port of the device whose consumer collection this is (AtkHeadsets.Serial*),
+    // through Family so a read that goes wrong is never sent again. Nothing is sent to the HID collection.
+    private static IEnumerable<DeviceBattery> AtkSerial(HidInfo info, HashSet<string> claimed)
+    {
+        var ports = UsbSerial.Ports(info.Vendor, info.Product);
+        if (ports.Count == 0) return [];
+        if (Family(info, ["atk.n9-serial"], _ => ports.Select(port => UsbSerial.Exchange(port, AtkHeadsets.SerialBaud, AtkHeadsets.SerialRequest(),
+                AtkHeadsets.SerialPacket, AtkHeadsets.SerialBattery, 1500)).FirstOrDefault(read => read is not null) is { } read ? (read, null) : null) is not { } found)
+            return [];
+        claimed.Add(info.Path);
+        string name = AtkHeadsets.SerialProducts.First(p => p.Product == info.Product).Name;
+        return [Mouse("atk-headset", info, name, found.Read, DeviceKind.Headphones, name)];
+    }
 
     // MCHOSE's 7 series on 0x5253 (the RealTek exchange alone; MCHOSE's other reads are for 0x3837).
     private static IEnumerable<DeviceBattery> MchoseRealtek(HidInfo info, HashSet<string> claimed)

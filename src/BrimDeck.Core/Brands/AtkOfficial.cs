@@ -22,6 +22,12 @@ namespace BrimDeck.Core;
 //   0x0B with command 0x13 (mouse info); the answer 0B 13 <length> <result>, then at 17 the charging state, at 18 the level,
 //   at 20 1 while the mouse is linked to the receiver (asked of the receivers only: the driver does not use it, and the mouse
 //   on its cable has no link). A level over 100 is no reading.
+// - ATK YOGO 75 and YOGO 75 PRO on their Evision V2 firmware (receivers 373B:1200 and 11FF, cables 119C and 119B), VIA's raw
+//   collection (0xFF60 / 0x61, report 0, 32 bytes on the receivers, 64 on the cables): frames AA <command> 00 00 00 <sequence,
+//   low byte first> 00, the answer AA .. <result, FF an error> .. .. <sequence> .. with its data from 8. The driver reads the
+//   power with "start" (0x10) first and then power_info (0x30), and sends no "end" after it: a start the keyboard is left in
+//   is how ATK HUB leaves it every time it reads, so the read is sent the same way, start first. The answer is the one with
+//   power_info's sequence: the level at 8 (the driver clamps it to 100; over 100 is no reading here) and 2 at 9 charging.
 [BrandFamilies]
 public static class AtkOfficial
 {
@@ -51,6 +57,16 @@ public static class AtkOfficial
     public static BatteryRead? NearlinkBattery(byte[] r)
         => r.Length >= 10 && r[0] is 0x04 or 0x05 && r[3] == 0x1A && r[8] is > 0 and <= 100 ? new(r[8], r[9] != 0) : null;
 
+    public static readonly int[] YogoProducts = [0x1200, 0x11FF, 0x119C, 0x119B];
+    public const byte YogoStart = 0x10, YogoPower = 0x30, YogoStartSequence = 0x01, YogoPowerSequence = 0x02;
+    // One frame for a collection whose output report is this long (report id included).
+    public static byte[] YogoFrame(byte command, byte sequence, int outputLength)
+        => BrandFamilies.Frame(outputLength >= 65 ? 65 : 33, 0x00, 0xAA, command, 0x00, 0x00, 0x00, sequence, 0x00);
+    // The answer without its zero report id.
+    public static BatteryRead? YogoBattery(byte[] r)
+        => r.Length >= 10 && r[0] == 0xAA && r[2] != 0xFF && r[5] == YogoPowerSequence && r[6] == 0x00 && r[8] is > 0 and <= 100
+            ? new(r[8], r[9] == 2) : null;
+
     public static readonly int[] HechiProducts = [0x1147, 0x1148, 0x1196];
     public static byte[] HechiRequest() => BrandFamilies.Frame(64, 0x0B, 0x13);
     public static BatteryRead? HechiBattery(byte[] r) => Hechi(r, receiver: true);
@@ -66,6 +82,8 @@ public static class AtkOfficial
     private static bool Hfd(HidShape s) => s.Vendor == AtkVendor && HfdProducts.Contains(s.Product) && MouseShapes.Collection(s, 0xFF60, 0x61) && s.OutputLength >= 6;
     private static bool Bytech(HidShape s) => BytechReceivers.Contains((s.Vendor, s.Product)) && MouseShapes.Collection(s, 0xFF60, 0x61) && s.OutputLength >= 64;
     private static bool Nearlink(HidShape s) => s.Vendor == AtkVendor && NearlinkProducts.Contains(s.Product) && MouseShapes.Collection(s, 0xFFB2, 0x01) && s.OutputLength >= 10;
+    private static bool Yogo(HidShape s) => s.Vendor == AtkVendor && YogoProducts.Contains(s.Product) && MouseShapes.Collection(s, 0xFF60, 0x61)
+        && s.OutputLength is 33 or 65 && s.InputLength >= 11;
     private static bool Hechi(HidShape s) => s.Vendor == AtkVendor && HechiProducts.Contains(s.Product) && MouseShapes.Collection(s, 0xFFA0, 0x02) && s.OutputLength >= 21;
 
     public static IEnumerable<BrandFamily> Families =>
@@ -79,6 +97,14 @@ public static class AtkOfficial
             ? [new BrandWay("atk.nearlink", WayTransport.Output, NearlinkRequest(0x05), NearlinkBattery) { TimeoutMs = 600 }]
             : [new BrandWay("atk.nearlink-cable", WayTransport.Output, NearlinkRequest(0x04), NearlinkBattery) { TimeoutMs = 600 }])
         { Kind = _ => DeviceKind.Mouse, Prefix = "atk" },
+        new("ATK Evision V2 keyboard", Yogo, s =>
+        [
+            new BrandWay("atk.evision-v2", WayTransport.Output, YogoFrame(YogoPower, YogoPowerSequence, s.OutputLength), YogoBattery)
+            {
+                Before = [YogoFrame(YogoStart, YogoStartSequence, s.OutputLength)], GapMs = 50, TimeoutMs = 1500, StripZero = true,
+            },
+        ])
+        { Kind = _ => DeviceKind.Keyboard, Prefix = "atkkb" },
         new("ATK HECHI mouse", Hechi, s => [new BrandWay("atk.hechi", WayTransport.Output, HechiRequest(), s.Product == 0x1147 ? HechiCableBattery : HechiBattery) { TimeoutMs = 800 }])
         { Kind = _ => DeviceKind.Mouse, Prefix = "atk" },
     ];

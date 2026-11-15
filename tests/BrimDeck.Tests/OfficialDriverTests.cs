@@ -11,6 +11,7 @@ static class OfficialDriverTests
         KnownFrames(check);
         AtkAndVgn(check);
         KeyboardsAndBigBrands(check);
+        SessionAndSerial(check);
     }
 
     private static HidShape Shape(int vendor, int product, int page, int usage = 1, int iface = -1, int input = 64, int output = 64, int feature = 0,
@@ -241,5 +242,27 @@ static class OfficialDriverTests
         check("Razer, SteelSeries and ASUS: the Orochi V2 2026 receiver, the Joro, the GameBuds X and the TX Mini Miku",
             Razer.Find(0x00E0) is { Transaction: 0x1F } && Razer.Find(0x02CD) is { Kind: DeviceKind.Keyboard, Interface: 3 }
             && SteelSeriesHeadsets.Find(0x2317) == SteelSeriesHeadsets.Exchange.GameBuds && Asus.Find(0x0B05, 0x1C5A) is { Family: Asus.Family.Mouse });
+    }
+
+    private static void SessionAndSerial(Action<string, bool> check)
+    {
+        var yogo = Shape(0x373B, 0x1200, 0xFF60, 0x61, 3, input: 33, output: 33, outputIds: [0x00]);
+        var answer = Padded(32, "AA 30 00 00 00 02 00 00 4E 02");
+        check("ATK YOGO 75: start then power_info as ATK HUB sends them, no end, the answer by its sequence, the level at 8 and 2 at 9 charging",
+            BrandFamilies.Find(yogo) is { } found && found.Family.Brand == "ATK Evision V2 keyboard"
+            && found.Ways.Single() is { } way && way.Before.Count == 1 && way.After.Count == 0
+            && way.Before[0][..8].SequenceEqual(Bytes("00 AA 10 00 00 00 01 00")) && way.Request[..8].SequenceEqual(Bytes("00 AA 30 00 00 00 02 00"))
+            && way.Request.Length == 33 && BrandFamilies.Find(yogo with { Product = 0x119C, InputLength = 65, OutputLength = 65 })!.Value.Ways.Single().Request.Length == 65
+            && AtkOfficial.YogoBattery(answer) == new BatteryRead(78, true) && AtkOfficial.YogoBattery(Padded(32, "AA 30 00 00 00 02 00 00 4E 01")) == new BatteryRead(78)
+            && AtkOfficial.YogoBattery(Padded(32, "AA 10 00 00 00 01 00 00 4E 02")) is null && AtkOfficial.YogoBattery(Padded(32, "AA 30 FF 00 00 02 00 00 4E 02")) is null
+            && AtkOfficial.YogoBattery(way.Request[1..]) is null && AtkOfficial.YogoBattery(Padded(32, "AA 30 00 00 00 02 00 00 65 00")) is null
+            && Family(yogo with { UsagePage = 0xFF00, Usage = 1 }) is null && Family(yogo with { Product = 0x1201 }) is null);
+        check("ATK N9 Pro and Ultra: their consumer collection only finds them (read on the serial port), 02 00 03 asked, the level and charging bit at 4",
+            Dongles.Find(0x373B, 0x11CB, 0x000C, "", 0, -1, 0x0001, 2, 0) == Dongles.Protocol.AtkSerial
+            && Dongles.Find(0x373B, 0x1203, 0x000C, "", 0, -1, 0x0001, 2, 0) == Dongles.Protocol.AtkSerial
+            && Dongles.Find(0x373B, 0x11CB, 0xFF90, "", 0, -1, 0x0001, 64, 64) is null && Dongles.Find(0x373B, 0x11CB, 0x0001, "", 0, -1, 0x0002, 8, 0) is null
+            && AtkHeadsets.SerialRequest().Length == 64 && AtkHeadsets.SerialRequest()[..3].SequenceEqual(Bytes("02 00 03"))
+            && AtkHeadsets.SerialBattery(Padded(64, "03 00 03 00 D7")) == new BatteryRead(87, true) && AtkHeadsets.SerialBattery(Padded(64, "03 00 03 00 57")) == new BatteryRead(87)
+            && AtkHeadsets.SerialBattery(Padded(64, "03 80 83 00 57")) is null && AtkHeadsets.SerialBattery(AtkHeadsets.SerialRequest()) is null);
     }
 }
