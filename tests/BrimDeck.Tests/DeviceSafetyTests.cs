@@ -113,7 +113,13 @@ static class DeviceSafetyTests
             && Dongles.Find(0x248A, 0x5C2E, 0x01, "", 0, iface: 2, usage: 0x00, inputLength: 33, outputLength: 33) == Dongles.Protocol.Ajazz
             && Dongles.Find(0x249A, 0x5C2F, 0x01, "", 0, iface: 0, usage: 0x02, inputLength: 8, outputLength: 0) is null
             && Dongles.Find(0x249A, 0x5C2F, 0xFF00, "", 33, iface: 1, usage: 0x01, inputLength: 8, outputLength: 8) is null);
-        check("Requests: MCHOSE's reads only on 0x3837's vendor pages, never its standard collections nor the MagDock",
+        check("Requests: MCHOSE's 3033 keyboard receiver read only on the web driver's usage 1:0 collection, never its keyboard, nor another product's",
+            Dongles.Find(0x3837, 0x3033, 0x0001, "MCHOSE K87S 2.4G", 0, -1, 0x0000, 65, 65) == Dongles.Protocol.Mchose
+            && Dongles.Find(0x3837, 0x3033, 0x0001, "MCHOSE K87S 2.4G", 0, -1, 0x0006, 9, 2) is null
+            && Dongles.Find(0x3837, 0x3033, 0x000C, "MCHOSE K87S 2.4G", 0, -1, 0x0001, 3, 0) is null
+            && Dongles.Find(0x3837, 0x5011, 0x0001, "MCHOSE G7 Mouse", 0, -1, 0x0000, 65, 65) is null
+            && Dongles.Find(0x3837, 0x200E, 0x0001, "MCHOSE K87S", 0, -1, 0x0000, 65, 65) is null);
+        check("Requests: MCHOSE's other reads only on 0x3837's vendor pages, never its standard collections nor the MagDock",
             Dongles.Find(0x3837, 0x5011, 0xFF01, "MCHOSE G7 Mouse", 0) == Dongles.Protocol.Mchose && Dongles.Find(0x3837, 0x5011, 0xFF0B, "MCHOSE G7 Mouse", 64) == Dongles.Protocol.Mchose
             && Dongles.Find(0x3837, 0x5011, 0xFF02, "MCHOSE G7 Mouse", 64) is null && Dongles.Find(0x3837, 0x5011, 0x0001, "MCHOSE G7 Mouse", 64, -1, 2, 64, 64) is null
             && Dongles.Find(0x3837, 0x1012, 0xFF01, "MCHOSE MagDock Mouse", 64, -1, 1, 64, 64) is null && Dongles.Find(0x3837, 0x4001, 0xFF0B, "MCHOSE K99 Keyboard", 64) is null);

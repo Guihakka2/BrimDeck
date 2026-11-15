@@ -32,7 +32,7 @@ BrimDeck 只读取电量：不配对、不断开，也不改动任何设备与 W
 | 品牌 | 范围 |
 | --- | --- |
 | 罗技、雷蛇、华硕 ROG | 已知的无线型号 |
-| 迈从、狼蛛（F87 Pro、F99 Pro、F75、F108 Pro）、凌豹 K98、珂芝 K75、VGN（含 V108）、ATK、CHERRY PIXIU75、海盗船 K65 PLUS、Alienware Pro、URX Core75、Lofree Flow Lite84、MonsGeek、黑爵 AK870、CAROTMAS Mars68、GANSS、前行者 X87、Teevolution、RK R98Pro V2 | 已知型号 |
+| 迈从（含 K87S、G87 V2、K99 V3、G75 V2）、狼蛛（F87 Pro、F99 Pro、F75、F108 Pro）、凌豹 K98、珂芝 K75、VGN（含 V108）、ATK、CHERRY PIXIU75、海盗船 K65 PLUS、Alienware Pro、URX Core75、Lofree Flow Lite84、MonsGeek、黑爵 AK870、CAROTMAS Mars68、GANSS、前行者 X87、Teevolution、RK R98Pro V2 | 已知型号 |
 
 **耳机**
 

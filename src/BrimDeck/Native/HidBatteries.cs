@@ -1113,14 +1113,16 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             }
             default:
             {
-                // Status and Audio: twice, 400 ms each (HaloBattery's budget); the 0x4D frame three times, 30 ms apart.
+                // Status, Audio and the keyboards' configuration read: twice, 400 ms each (HaloBattery's budget); the 0x4D frame
+                // three times, 30 ms apart. The configuration read is on reports without an id, so the id is dropped from its answers.
                 var (request, parse, attempts) = read switch
                 {
                     Dongles.MchoseRead.Status => (Dongles.MchoseStatusRequest(), (Func<byte[], BatteryRead?>)Dongles.MchoseStatus, 2),
                     Dongles.MchoseRead.Audio => (Dongles.MchoseAudioRequest(), Dongles.MchoseAudio, 2),
+                    Dongles.MchoseRead.Config => (Dongles.MchoseConfigRequest(), Dongles.MchoseConfig, 2),
                     _ => (Dongles.MchoseRequest(), Dongles.MchoseBattery, 3)
                 };
-                using var device = new HidDevice(info);
+                using var device = new HidDevice(info) { StripZero = read == Dongles.MchoseRead.Config };
                 for (int attempt = 0; attempt < attempts; attempt++)
                 {
                     if (attempt > 0) Thread.Sleep(30);

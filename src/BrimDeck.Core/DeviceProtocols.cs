@@ -658,17 +658,18 @@ public static class Dongles
 
     // MCHOSE's own vendor id 0x3837 carries several chips, each with its own read: the 7 series' RealTek exchange above, the
     // status read on output report 0x55 that M HUB (MCHOSE's driver) uses for its newer devices, M HUB's framed read for its
-    // headsets on the same report, the 0x4D frame of the web driver's mice, and the Gmouse query. Which one a model speaks is
+    // headsets on the same report, the 0x4D frame of the web driver's mice, the Gmouse query, and the configuration read of the
+    // keyboards on the 3033 receiver (MchoseConfig). Which one a model speaks is
     // not something a receiver can be asked, so it is not looked up by model: each read goes only to the collection shape its
     // source documents and only where the collection declares the read's report id, the kind (MchoseKind) decides the
     // order (the reads measured on hardware first), and a reply counts only when it has that read's exact shape. The read
     // that answers is kept for the device (HidBatteries), and the others are no longer sent to it. 0x3837 is
     // MCHOSE's alone, so every firmware behind it is MCHOSE's; the chip makers' and shared ids keep their lists (Gmouse's
     // 0xA8A5, the A5 Pro Max's 0x2023, the 41E4 keyboards), and 0x5253 gets the RealTek exchange only.
-    public enum MchoseRead { Realtek, Status, Audio, Frame4D, Gmouse }
+    public enum MchoseRead { Realtek, Status, Audio, Frame4D, Gmouse, Config }
     // The kind by the name, else for the products whose name does not say it: the V9 Turbo's dongle and headset and the X9
-    // headset, and the G98 V3 keyboard (which does not answer the RealTek exchange, HaloBattery #362). The MagDock (1012) is
-    // sent nothing.
+    // headset, the G98 V3 keyboard (which does not answer the RealTek exchange, HaloBattery #362) and the keyboards' 3033
+    // receiver, whose names end in "2.4G". The MagDock (1012) is sent nothing.
     // The V9 Turbo headset's dock (6009), V9 Turbo (600D), V9 Pro 2 (6011) and R9 (6013) are headsets and the K20 Pro (6003),
     // K20 (60C4) and K20 GT (60C6) speakers, by wzk112/MchoseHub's device catalog (no license; the ids only).
     // Legacy: without those hints, as the device keys were made before them (a key keeps its prefix).
@@ -679,7 +680,7 @@ public static class Dongles
         0x6008 or 0x600A or 0x6045 => DeviceKind.Headphones,
         0x6009 or 0x600D or 0x6011 or 0x6013 when !legacy => DeviceKind.Headphones,
         0x6003 or 0x60C4 or 0x60C6 when !legacy => DeviceKind.Speaker,
-        0x1015 => DeviceKind.Keyboard,
+        0x1015 or MchoseConfigReceiver => DeviceKind.Keyboard,
         _ => null
     };
     // outputIds, featureIds: the report ids the collection declares; null where they are not known (Find, which only decides
@@ -690,7 +691,7 @@ public static class Dongles
         MchoseRead[] order = MchoseKind(product, name) switch
         {
             DeviceKind.Mouse => [MchoseRead.Realtek, MchoseRead.Frame4D, MchoseRead.Gmouse, MchoseRead.Status],
-            DeviceKind.Keyboard => [MchoseRead.Status],
+            DeviceKind.Keyboard => [MchoseRead.Config, MchoseRead.Status],
             DeviceKind.Headphones or DeviceKind.Earbuds or DeviceKind.Speaker => [MchoseRead.Audio, MchoseRead.Status],
             null => [MchoseRead.Realtek, MchoseRead.Frame4D, MchoseRead.Gmouse, MchoseRead.Audio, MchoseRead.Status],
             _ => []
@@ -702,8 +703,39 @@ public static class Dongles
             MchoseRead.Status or MchoseRead.Audio => usagePage >= 0xFF00 && outputLength >= 64 && Output(0x55),
             MchoseRead.Frame4D => usagePage is 0xFF01 or 0xFF0B && usage != 0x0010 && Output(0x4D),
             MchoseRead.Gmouse => usagePage == 0xFF01 && usage == 0x0010 && outputLength >= 65 && Output(0x00),
+            MchoseRead.Config => product == MchoseConfigReceiver && usagePage == 0x0001 && usage == 0x0000 && outputLength >= 65 && Output(0x00),
             _ => false
         })];
+    }
+
+    // MCHOSE's keyboards on the 2.4 GHz receiver 3837:3033: the K87S, G87 V2, K99 V3 and G75 V2, told apart by the product
+    // string. The vendor's web driver (mchose.com.cn/cizhou) lists them so and gives the battery to these four among its
+    // keyboards; it speaks to the collection on usage page 1, usage 0, with 64-byte reports and no report id, in frames
+    // 55 <command> 00 <sum> <size> <offset low> <offset high> 00 <data>, answered AA <command> 00 <sum> <size> <offset low>
+    // <offset high> 00 <data>, the sum being the low byte of every byte after it. Command 05 reads the function configuration,
+    // 64 bytes a profile, whose byte 32 holds the level in its low seven bits and charging in bit 7. Asked here as the driver
+    // asks on connecting: profile 0's first 56 bytes (55 05 00 38 38 00 00 00), the level then at 8 + 32 of the answer.
+    // Measured on a K87S (#291): 0x35 on battery and 0xB5 charging at 53 %, 0x42 and 0xC2 at 66 %, the same in profiles 0 and
+    // 1 whichever is active, the sum holding on every answer. The keyboard also sends FA FB 07 <level> <charging> unasked, but
+    // only when its charging changes (nothing else in half an hour there), so it is asked. The 4D frames do not reach these
+    // keyboards (nothing answered there). A level of 0 is no reading.
+    public const int MchoseConfigReceiver = 0x3033;
+    public static byte[] MchoseConfigRequest()
+    {
+        var frame = new byte[65];
+        new byte[] { 0x00, 0x55, 0x05, 0x00, 0x38, 0x38, 0x00, 0x00, 0x00 }.CopyTo(frame, 0);
+        return frame;
+    }
+    public static BatteryRead? MchoseConfig(byte[] r)
+    {
+        if (r.Length < 41 || r[0] != 0xAA || r[1] != 0x05 || r[5] != 0x00 || r[6] != 0x00) return null;
+        int size = r[4];
+        if (size is < 33 or > 0x38 || r.Length < 8 + size) return null;
+        int sum = 0;
+        for (int i = 4; i < 8 + size; i++) sum += r[i];
+        if (r[3] != (byte)sum) return null;
+        int level = r[40] & 0x7F;
+        return level is > 0 and <= 100 ? new(level, (r[40] & 0x80) != 0) : null;
     }
 
     // The status read on report 0x55: 55 65 01, zeros to 64 bytes, answered by 55 65 <level> <state>, the state 2 on battery,

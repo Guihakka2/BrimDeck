@@ -32,7 +32,7 @@ HID devices that carry the standard battery report are shown too.
 | Brand | Coverage |
 | --- | --- |
 | Logitech, Razer, ASUS ROG | Known wireless models |
-| MCHOSE, AULA (F87 Pro, F99 Pro, F75, F108 Pro), LINGBAO K98, KZZI K75, VGN (V108 included), ATK, CHERRY PIXIU75, Corsair K65 PLUS, Alienware Pro, URX Core75, Lofree Flow Lite84, MonsGeek, AJAZZ AK870, CAROTMAS Mars68, GANSS, EWEADN X87, Teevolution, RK R98Pro V2 | Known models |
+| MCHOSE (K87S, G87 V2, K99 V3 and G75 V2 included), AULA (F87 Pro, F99 Pro, F75, F108 Pro), LINGBAO K98, KZZI K75, VGN (V108 included), ATK, CHERRY PIXIU75, Corsair K65 PLUS, Alienware Pro, URX Core75, Lofree Flow Lite84, MonsGeek, AJAZZ AK870, CAROTMAS Mars68, GANSS, EWEADN X87, Teevolution, RK R98Pro V2 | Known models |
 
 **Headsets**
 
