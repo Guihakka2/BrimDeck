@@ -40,6 +40,7 @@ internal static class Program
             finally { if (System.IO.Directory.Exists(bannerRoot)) System.IO.Directory.Delete(bannerRoot, true); }
             LayoutRetryTests.Run(Check);
             NoticePanelTests.Run(Check);
+            NoticeRowBatchTests.Run(Check);
             DrawnAutomationTests.Run(Check);
             RingLetterChecks.Run(Check);
             SettingsFocusTests.Run(Check);
