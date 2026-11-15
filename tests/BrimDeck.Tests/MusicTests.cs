@@ -44,6 +44,10 @@ internal static class MusicTests
         var gap = Lyrics.Parse("[00:02]长句\n[00:14]\n[00:20]下一句", null, 40, "网易云音乐");
         check("Only timestamped blank lines start an instrumental gap", gap.At(13.999).Current == "长句" && gap.At(14).Current == "♪" && gap.At(19.999).Current == "♪" && gap.At(20).Current == "下一句");
         check("Seeking backwards from an explicit gap restores the lyric", gap.At(16).Current == "♪" && gap.At(8).Current == "长句");
+        var pauses = Lyrics.Parse("[00:02]一句\n[00:05.59]\n[00:06.20]二句\n[00:10]\n[00:15]三句\n[00:18]\n[00:18.50]\n[00:19]四句\n[00:22]", null, 30, "QueMusic");
+        check("Blank lines shorter than the gap keep the line before them shown",
+            pauses.Lines.Select(l => l.Text).SequenceEqual(["一句", "二句", "", "三句", "四句", ""])
+            && pauses.At(5.8).Current == "一句" && pauses.At(12).Current == "♪" && pauses.At(18.7).Current == "三句" && pauses.At(25).Current == "♪");
         check("Timestamped lyrics require a real playback position to synchronize", lrc.CanSynchronize(track) && !lrc.CanSynchronize(track with { PositionKnown = false }) && !lrc.CanSynchronize(track with { End = TimeSpan.Zero }));
         var plain = Lyrics.Parse(null, "甲\n乙", 100, "test");
         check("Plain lyrics retain text without fabricating timestamps", !plain.Synced && plain.Lines.Select(l => l.Text).SequenceEqual(["甲", "乙"]) && plain.Lines.All(l => l.Seconds == 0));

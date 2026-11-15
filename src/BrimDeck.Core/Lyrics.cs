@@ -17,6 +17,8 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
     public static Lyrics Empty { get; } = new([], true, "");
     // Apple Music's lines are shown this many seconds before they are sung, so that a line can be read as it starts.
     public const double AppleLead = 0.2;
+    // A pause between lines shorter than this many seconds keeps the line before it shown; a longer one is shown as "♪".
+    public const double Gap = 5;
     public bool QqPreview { get; init; }
     public bool CanSynchronize(MediaTrack track) => Synced && track.HasTimeline;
     public (string Previous, string Current, string Next) At(MediaTrack track, DateTimeOffset now, LyricHold? hold = null) => Nearest(Around(track, now, 1, 1, hold));
@@ -57,7 +59,7 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
         string[] Texts(int from, int count) => [.. Lines.Skip(from).Take(count).Select(line => line.Text)];
         if (index < 0) return new([], "♪", Texts(0, after));
         // LRC timestamps start a line; they do not specify how long it is sung.
-        // Only an explicit blank line marks a gap before the next timestamp.
+        // Only an explicit blank line marks a gap before the next timestamp (Parse keeps only those of Gap or longer).
         string text = string.IsNullOrWhiteSpace(Lines[index].Text) ? "♪" : Lines[index].Text;
         int first = Math.Max(0, index - before);
         return new(Texts(first, index - first), text, Texts(index + 1, after));
@@ -82,12 +84,28 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
             }
         }
         if (result.Count > 0)
-            return InstrumentalNotice(result.Select(l => l.Text)) ? new([], true, source, true) : new(result.OrderBy(l => l.Seconds).Distinct().ToList(), true, source, instrumental);
+            return InstrumentalNotice(result.Select(l => l.Text)) ? new([], true, source, true) : new(WithoutShortGaps([.. result.OrderBy(l => l.Seconds).Distinct()]), true, source, instrumental);
         var lines = (plain ?? "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
         if (lines.Length == 0) return new([], true, source, instrumental);
         if (InstrumentalNotice(lines)) return new([], true, source, true);
         // Plain lyrics have no timing information; retain their order for manual scrolling.
         return new(lines.Select(line => new LyricLine(0, line)).ToArray(), false, source, instrumental);
+    }
+    // Some LRC files put a blank line wherever a line ends before the next one starts, often less than a second ahead of it.
+    // A blank line the next line follows within Gap seconds is dropped, so the line before it stays shown through the pause.
+    private static List<LyricLine> WithoutShortGaps(List<LyricLine> lines)
+    {
+        var kept = new List<LyricLine>(lines.Count);
+        double? next = null;
+        for (int i = lines.Count - 1; i >= 0; i--)
+        {
+            bool blank = string.IsNullOrWhiteSpace(lines[i].Text);
+            if (blank && next is { } start && start - lines[i].Seconds < Gap) continue;
+            kept.Add(lines[i]);
+            if (!blank) next = lines[i].Seconds;
+        }
+        kept.Reverse();
+        return kept;
     }
     // QQ Music, NetEase and KuGou give a song without words a lyric of only credits ("作曲 : Yiruma") and a notice such as
     // "纯音乐，请欣赏" or "此歌曲为没有填词的纯音乐，请您欣赏"; such a lyric is the song's mark as instrumental. A notice worded
