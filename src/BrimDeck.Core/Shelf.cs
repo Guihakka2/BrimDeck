@@ -399,11 +399,22 @@ public static class Shelf
 }
 
 // The sizes of the page at a height and width (the table in the design): margins, row and header heights, type sizes and what the
-// file column has room for.
+// file column has room for. Side by side, the file column takes its share of the room between the margins (DeckSettings.ShelfFileShare,
+// set by dragging the divider or in the settings), never under MinFile, and leaves the clipboard MinClip where the page is wide
+// enough. Stacked (ShelfArrangement.Stacked), the two columns are cards of one width (ShelfDeck). The cards reach out past the
+// page's margins, to CardSide from the panel's edges, so that a column in its card (CardPad and the card's edge inside it) starts
+// where it does side by side, at Side; the card in front leaves the side strip of the other showing (Peek). The cards start
+// CardTop below the toolbar and end CardBottom above the panel's bottom edge.
 public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double Header, double Row, double Body, double Aux, double Title,
-    double FileColumn, double ClipColumn, bool FileSize, bool FileDate, bool TwoLines, double Thumb, double ThumbHeight, double Icon, double DetailBody)
+    double FileColumn, double ClipColumn, bool FileSize, bool FileDate, bool TwoLines, double Thumb, double ThumbHeight, double Icon, double DetailBody,
+    bool Stacked = false, double Peek = 0, double CardTop = 0, double CardBottom = 0, double CardPad = 0, double CardSide = 0)
 {
-    public static ShelfLayout For(double width, double height)
+    // The file transfer's share of the width side by side, in percent: the default and the range the divider and the setting keep to.
+    public const double DefaultShare = 40, MinShare = 20, MaxShare = 80;
+    // The narrowest the columns are made side by side.
+    public const double MinFile = 170, MinClip = 180;
+
+    public static ShelfLayout For(double width, double height, double share = DefaultShare, bool stacked = false)
     {
         var tier = height < 180 ? ShelfTier.Compact : height < 280 ? ShelfTier.Standard : ShelfTier.Spacious;
         var (side, gap, header, row, body, aux, title) = tier switch
@@ -412,12 +423,36 @@ public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double
             ShelfTier.Standard => (20d, 32d, 30d, 26d, 12.5, 11d, 13d),
             _ => (24d, 40d, 32d, 30d, 13d, 11.5, 13d)
         };
-        double inner = Math.Max(0, width - 2 * side - gap);
-        double files = Math.Round(Math.Clamp(inner * .4, 170, 340)), clips = Math.Max(0, inner - files);
+        var (peek, cardBottom, pad) = tier switch
+        {
+            ShelfTier.Compact => (44d, 6d, 7d),
+            ShelfTier.Standard => (50d, 8d, 9d),
+            _ => (56d, 8d, 11d)
+        };
+        // The card's edge (1) and its padding bring the column back to the page's margin.
+        double cardTop = 2, cardSide = side - pad - 1;
+        double files, clips;
+        if (stacked)
+            files = clips = Math.Max(0, width - 2 * cardSide - peek - 2 * (pad + 1));
+        else
+        {
+            double inner = Math.Max(0, width - 2 * side - gap);
+            files = FileWidth(inner, share); clips = Math.Max(0, inner - files);
+        }
         bool spacious = tier == ShelfTier.Spacious;
         return new(tier, side, gap, header, row, body, aux, title, files, clips, files >= 210, spacious && files >= 300, spacious,
-            spacious ? 48 : 34, spacious ? 30 : Math.Max(14, row - 8), spacious ? 18 : 16, DetailText);
+            spacious ? 48 : 34, spacious ? 30 : Math.Max(14, row - 8), spacious ? 18 : 16, DetailText,
+            stacked, stacked ? peek : 0, stacked ? cardTop : 0, stacked ? cardBottom : 0, stacked ? pad : 0, stacked ? cardSide : 0);
     }
+    // The file column's width side by side for the room both columns share (less the gap between them).
+    public static double FileWidth(double inner, double share)
+    {
+        double want = Math.Round(inner * ClampShare(share) / 100);
+        return Math.Max(MinFile, Math.Min(want, inner - MinClip));
+    }
+    // The share a dragged divider leaves the file column: its width over the room both columns share, in whole percent.
+    public static double ShareOf(double fileWidth, double inner) => inner <= 0 ? DefaultShare : ClampShare(Math.Round(fileWidth / inner * 100));
+    public static double ClampShare(double share) => double.IsFinite(share) ? Math.Clamp(share, MinShare, MaxShare) : DefaultShare;
     // The details' text is one size, whatever the panel's: reading a whole entry, the text should not grow and shrink with it.
     public const double DetailText = 13.5;
     // The details show their facts in a column at the right from this width on, else in a line at the bottom.
@@ -425,5 +460,33 @@ public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double
     // The search box: 36 % of the panel's width, between 180 and 280.
     public static double SearchWidth(double width) => Math.Round(Math.Clamp(width * .36, 180, 280));
 }
+
+// The stacked page (MainWindow.ShelfArrange.cs). The two cards are alike, the clipboard's against the left edge of the page and the
+// file transfer's against the right. The one in front leaves Peek of the other showing; the one behind is narrowed to that strip
+// and Under more, which lies beneath the card in front, and stands Inset lower at the top and higher at the bottom. Switching,
+// both change width together in SwapSeconds on cubic-bezier(.22, 1, .36, 1), the one coming forward on top, so that one edge
+// moves across the page; their fills change in ToneSeconds, and in each card the column and the strip's parts trade places in
+// FadeSeconds. Nothing slides in from outside, nothing is scaled, and no shadow is drawn.
+public static class ShelfDeck
+{
+    public const double Under = 12, Inset = 4, SwapSeconds = .28, FadeSeconds = .16, ToneSeconds = .18;
+    // The cards' widths for the card in front, on a page `full` wide between its margins.
+    public static (double Clips, double Files) Widths(ShelfSide front, double full, double peek)
+    {
+        double wide = Math.Max(0, full - peek), narrow = Math.Min(wide, peek + Under);
+        return front == ShelfSide.Clipboard ? (wide, narrow) : (narrow, wide);
+    }
+    // What a side strip of a height has room for under its name (its length along the strip): the count goes first, then the icon.
+    public static (bool Icon, bool Count) StripParts(double height, double padding, double gap, double icon, double name, double count)
+    {
+        double room = height - padding;
+        if (icon + gap + name + gap + count <= room) return (true, true);
+        return (icon + gap + name <= room, false);
+    }
+}
+
+// How the page shows its two columns: side by side with a divider between them, or as two cards, one in front over most of the
+// width and the other behind it, showing only its side strip (the clipboard at the left, the file transfer at the right).
+public enum ShelfArrangement { Split, Stacked }
 
 public enum ShelfTier { Compact, Standard, Spacious }

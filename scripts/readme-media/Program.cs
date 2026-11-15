@@ -163,6 +163,9 @@ internal sealed class Renderer(App app, string output, string language, string[]
             if (scenes.Contains("settings")) await SettingsPage("settings", 3);
             // The music page at its presets and at the ends of its size range; for checking layout changes, not for the README.
             if (scenes.Contains("music-sizes")) await MusicSizes();
+            // The clipboard page side by side and stacked, at three sizes, and the stacked cards trading places; for checking, not for the README.
+            if (scenes.Contains("shelf-settings-stacked")) { _settings.ShelfArrangement = ShelfArrangement.Stacked; await SettingsPage("shelf-layout-settings-stacked", 17); }
+            if (scenes.Contains("shelf-layout")) { await ShelfLayouts(); await SettingsPage("shelf-layout-settings", 17); }
         }
         finally { Directory.Delete(folder, true); }
     }
@@ -909,6 +912,45 @@ internal sealed class Renderer(App app, string output, string language, string[]
 
     // The settings window is built without being shown: its content is taken out, laid out at the default size and
     // captured with the window's resources.
+    private async Task ShelfLayouts()
+    {
+        const double scale = 2;
+        void Build() => Program.Call(_deck, "RenderShelf", [typeof(bool)], false);
+        void Front(ShelfSide side) => Program.SetField(_deck, "_shelfFront", side);
+        _settings.Animations = false;
+        SelectPage(DeckPage.Clipboard);
+        _deck.SetExpanded(true, true);
+        foreach (var (width, height) in new (double, double)[] { (440, 140), (620, 220), (860, 320) })
+        {
+            _settings.ClipboardWidth = width; _settings.ClipboardHeight = height; Refresh();
+            _settings.ShelfArrangement = ShelfArrangement.Split; Build();
+            await Save($"shelf-split-{width}x{height}", scale);
+            _settings.ShelfArrangement = ShelfArrangement.Stacked;
+            Front(ShelfSide.Clipboard); Build();
+            await Save($"shelf-stacked-clips-{width}x{height}", scale);
+            Front(ShelfSide.Files); Build();
+            await Save($"shelf-stacked-files-{width}x{height}", scale);
+        }
+        // The cards trading places at the default size, taken at moments of the swap.
+        _settings.ClipboardWidth = 620; _settings.ClipboardHeight = 220; Refresh();
+        _settings.Animations = true;
+        Front(ShelfSide.Clipboard); Build();
+        await Settle();
+        Program.Call(_deck, "BringForward", [typeof(ShelfSide)], ShelfSide.Files);
+        var start = DateTime.UtcNow;
+        foreach (int ms in new[] { 40, 90, 150, 230, 350, 600 })
+        {
+            var wait = start.AddMilliseconds(ms) - DateTime.UtcNow;
+            if (wait > TimeSpan.Zero) await Task.Delay(wait);
+            Write(Capture(scale), Path.Combine(output, $"shelf-swap-{ms}ms.png"));
+            Console.WriteLine($"shelf-swap-{ms}ms");
+        }
+        _settings.ShelfArrangement = ShelfArrangement.Split;
+        SelectPage(DeckPage.Usage);
+        _deck.SetExpanded(false, true);
+        await Settle();
+    }
+
     private async Task SettingsPage(string name, int page)
     {
         const double scale = 1.5, width = 960, height = 640;

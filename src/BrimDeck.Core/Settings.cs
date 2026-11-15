@@ -620,6 +620,16 @@ public sealed class DeckSettings
     public bool ClipboardKeepHistory { get; set; }
     public HistoryLength ClipboardKeepFor { get; set; } = HistoryLength.Month;
     public TransferDragOut TransferDragOut { get; set; } = TransferDragOut.Copy;
+    // The page's two columns side by side or stacked as cards (ShelfLayout), and side by side the file transfer's share of the width
+    // in percent, set by dragging the divider between them or in the settings.
+    public ShelfArrangement ShelfArrangement { get; set; } = ShelfArrangement.Split;
+    public double ShelfFileShare { get; set; } = ShelfLayout.DefaultShare;
+    // Stacked, further ways to bring the card behind forward, besides a click on its side strip, on the title of the card in
+    // front or on the page's own button: resting the pointer on the side strip, a middle click anywhere on the page, and a
+    // two-finger sideways swipe or Shift with the wheel.
+    public bool ShelfHoverSwitch { get; set; }
+    public bool ShelfMiddleSwitch { get; set; } = true;
+    public bool ShelfSwipeSwitch { get; set; }
     public double MonitorHeight { get; set; } = MonitorSizes.Default.Height;
     public MonitorPalette MonitorPalette { get; set; } = MonitorPalette.Theme;
     // The Custom scheme's colors; kept while another scheme is chosen.
@@ -880,6 +890,8 @@ public sealed class DeckSettings
         ClipboardWidth = double.IsFinite(ClipboardWidth) ? Math.Clamp(ClipboardWidth, DeckPages.MinWidth, DeckPages.MaxWidth) : ShelfSizes.Default.Width;
         ClipboardHeight = double.IsFinite(ClipboardHeight) ? Math.Clamp(ClipboardHeight, DeckPages.MinHeight, DeckPages.MaxHeight) : ShelfSizes.Default.Height;
         if (!Enum.IsDefined(TransferDragOut)) TransferDragOut = TransferDragOut.Copy;
+        if (!Enum.IsDefined(ShelfArrangement)) ShelfArrangement = ShelfArrangement.Split;
+        ShelfFileShare = ShelfLayout.ClampShare(Math.Round(ShelfFileShare, 1));
         if (!Enum.IsDefined(ClipboardKeepFor)) ClipboardKeepFor = HistoryLength.Month;
         ClipboardExcluded = ClipboardExclusions.Normalize(ClipboardExcluded);
         PanelScale = PanelScales.Fit(PanelScale);

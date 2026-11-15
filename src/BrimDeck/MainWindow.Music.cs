@@ -119,7 +119,7 @@ public partial class MainWindow
     {
         // A page hotkey opens on its page and remembers it, as choosing it on the page switch does (MainWindow.Hotkeys.cs).
         // Opened from the file transfer's count on the island, the panel opens on the clipboard and file transfer page.
-        var wanted = _hotkeyPage ?? (DeckPages.Shown(Settings, DeckPage.Clipboard) && PointerOnTransfer() ? DeckPage.Clipboard : (DeckPage?)null) ?? DeckPages.Opening(Settings.DefaultPage) ?? _page;
+        var wanted = _hotkeyPage ?? (DeckPages.Shown(Settings, DeckPage.Clipboard) && OpensOnTransfer() ? DeckPage.Clipboard : (DeckPage?)null) ?? DeckPages.Opening(Settings.DefaultPage) ?? _page;
         if (wanted != _page && DeckPages.Shown(Settings, wanted)) SelectPage(wanted, remember: _hotkeyPage is not null);
         // The clipboard page builds nothing while the panel is closed (RenderShelf), the page switch just above included: it is
         // built now, as the panel opens on it.
@@ -184,7 +184,15 @@ public partial class MainWindow
 
     private void MusicPage_Click(object sender, RoutedEventArgs e) => SelectPage(DeckPage.Music);
     private void MonitorPage_Click(object sender, RoutedEventArgs e) => SelectPage(DeckPage.Monitor);
-    private void ShelfPage_Click(object sender, RoutedEventArgs e) => SelectPage(DeckPage.Clipboard);
+    private void ShelfPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsShelfPage && Settings.ShelfArrangement == ShelfArrangement.Stacked && _shelfDetail is null && _shelfEdit is null && !_dropping)
+        {
+            BringForward(ShelfFront == ShelfSide.Clipboard ? ShelfSide.Files : ShelfSide.Clipboard);
+            return;
+        }
+        SelectPage(DeckPage.Clipboard);
+    }
     private void DevicesPage_Click(object sender, RoutedEventArgs e) => SelectPage(DeckPage.Devices);
     // Where the usage page's application tabs start: after the page switch, which holds one 28 DIP button per shown page.
     private double ApplicationPagesLeft(double side) { int pages = DeckPages.Visible(Settings).Count; return side + (pages <= 1 ? 36 : 72 + 29 * (pages - 2)); }
@@ -228,6 +236,7 @@ public partial class MainWindow
             button.Foreground = UI.Brush(current ? Look.Primary : Look.Secondary);
         }
         PlacePageCapsule();
+        UpdateShelfPageButton();
         ApplicationPages.Margin = new Thickness(ApplicationPagesLeft(_header.Side), 0, 0, 0);
         // With the entry switched on the source menu has one more row. Without a source that row stands alone in the button.
         bool entry = FullControlEntryShown, alone = entry && _mediaTrack is null;

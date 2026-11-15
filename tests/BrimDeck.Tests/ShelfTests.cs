@@ -185,9 +185,32 @@ internal static class ShelfTests
         var spacious = ShelfLayout.For(1200, 400);
         check("Shelf layout: steps by height", compact.Tier == ShelfTier.Compact && compact.Row == 22 && standard.Tier == ShelfTier.Standard && standard.Row == 26
             && spacious.Tier == ShelfTier.Spacious && spacious.Row == 30 && spacious.TwoLines && ShelfLayout.For(620, 179).Tier == ShelfTier.Compact && ShelfLayout.For(620, 280).Tier == ShelfTier.Spacious);
-        check("Shelf layout: the file column is 40 % within 170 and 340, and shows sizes from 210 and dates from 300 when spacious",
+        check("Shelf layout: the file column is 40 % by default, never under 170, and shows sizes from 210 and dates from 300 when spacious",
             compact.FileColumn == 170 && !compact.FileSize && standard.FileColumn == Math.Round((620 - 40 - 32) * .4) && standard.FileSize
-            && spacious.FileColumn == 340 && spacious.FileDate && !ShelfLayout.For(860, 260).FileDate);
+            && spacious.FileColumn == Math.Round((1200 - 48 - 40) * .4) && spacious.FileDate && !ShelfLayout.For(860, 260).FileDate);
+        // The share set by the divider or the settings: kept within 20 % and 80 %, and the clipboard keeps 180 where the page has room.
+        var wide = ShelfLayout.For(1000, 260, 70);
+        check("Shelf layout: the file transfer's share is kept within its range and leaves the clipboard 180",
+            wide.FileColumn == Math.Round((1000 - 40 - 32) * .7) && wide.FileColumn + wide.ClipColumn == 1000 - 40 - 32
+            && ShelfLayout.For(1000, 260, 5).FileColumn == Math.Round((1000 - 40 - 32) * .2) && ShelfLayout.For(1000, 260, 95).FileColumn == Math.Round((1000 - 40 - 32) * .8)
+            && ShelfLayout.For(560, 220, 80).ClipColumn == 180 && ShelfLayout.For(440, 140, 10).FileColumn == 170 && ShelfLayout.For(440, 140, 80).FileColumn == 440 - 28 - 24 - 180
+            && ShelfLayout.ShareOf(300, 1000) == 30 && ShelfLayout.ShareOf(950, 1000) == 80 && ShelfLayout.ClampShare(double.NaN) == ShelfLayout.DefaultShare);
+        var stacked = ShelfLayout.For(620, 220, 40, stacked: true);
+        check("Shelf layout: stacked, the cards reach out past the page's margins so that a column starts where it does side by side",
+            stacked.Stacked && stacked.FileColumn == stacked.ClipColumn && stacked.FileColumn == 620 - 2 * 20 - 50
+            && stacked is { Peek: 50, CardTop: 2, CardBottom: 8, CardPad: 9, CardSide: 10 } && stacked.CardSide + 1 + stacked.CardPad == stacked.Side
+            && ShelfLayout.For(440, 140, 40, stacked: true) is { FileColumn: 440 - 2 * 14 - 44, Peek: 44, CardTop: 2, CardBottom: 6, CardPad: 7, CardSide: 6 }
+            && ShelfLayout.For(860, 320, 40, stacked: true) is { FileColumn: 860 - 2 * 24 - 56, Peek: 56, CardTop: 2, CardBottom: 8, CardPad: 11, CardSide: 12 }
+            && ShelfLayout.For(620, 220) is { Stacked: false, Peek: 0, CardTop: 0, CardBottom: 0, CardPad: 0, CardSide: 0 });
+        // Stacked, the card in front leaves the other's strip showing, and the other is that strip and what lies under the card in front.
+        check("Shelf deck: the card in front is the page less the strip, the other the strip and 12 more; the two trade widths",
+            ShelfDeck.Widths(ShelfSide.Clipboard, 580, 50) == (530, 62) && ShelfDeck.Widths(ShelfSide.Files, 580, 50) == (62, 530)
+            && ShelfDeck.Widths(ShelfSide.Files, 40, 50) == (0, 0));
+        // A side strip shows what its height has room for under its name: the count goes first, then the icon.
+        check("Shelf deck: a side strip too short for all its parts drops its count first, then its icon",
+            ShelfDeck.StripParts(148, 19, 7, 16, 56, 15) == (true, true) && ShelfDeck.StripParts(84, 13, 5, 15, 50, 15) == (true, false)
+            && ShelfDeck.StripParts(84, 13, 5, 15, 70, 15) == (false, false) && ShelfDeck.StripParts(120, 19, 7, 16, 56, 15) == (true, true)
+            && ShelfDeck.StripParts(119, 19, 7, 16, 56, 15) == (true, false));
         check("Shelf layout: the search box is 36 % of the width within 180 and 280, and the details have a side column from 560",
             ShelfLayout.SearchWidth(440) == 180 && ShelfLayout.SearchWidth(620) == 223 && ShelfLayout.SearchWidth(1200) == 280 && ShelfLayout.DetailSide(560) && !ShelfLayout.DetailSide(559));
 
@@ -202,6 +225,19 @@ internal static class ShelfTests
         check("Shelf settings: files dragged out are copied unless moving is chosen; an older file copies; an unknown choice copies",
             settings.TransferDragOut == TransferDragOut.Copy && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{}")!.TransferDragOut == TransferDragOut.Copy
             && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{\"TransferDragOut\":1}")!.TransferDragOut == TransferDragOut.Move && dragOut.TransferDragOut == TransferDragOut.Copy);
+        var arranged = new DeckSettings { ShelfArrangement = (ShelfArrangement)9, ShelfFileShare = 97.34 };
+        arranged.Normalize();
+        var unsure = new DeckSettings { ShelfFileShare = double.NaN };
+        unsure.Normalize();
+        check("Shelf settings: side by side with 40 % for the file transfer by default; an unknown arrangement is side by side, a share is kept in range",
+            settings.ShelfArrangement == ShelfArrangement.Split && settings.ShelfFileShare == 40 && arranged.ShelfArrangement == ShelfArrangement.Split
+            && arranged.ShelfFileShare == 80 && unsure.ShelfFileShare == 40
+            && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{\"ShelfArrangement\":1,\"ShelfFileShare\":35.5}") is { ShelfArrangement: ShelfArrangement.Stacked, ShelfFileShare: 35.5 });
+        check("Shelf settings: stacked quick-switch defaults (middle-click on, hover and swipe off), JSON round-trip and copy",
+            !settings.ShelfHoverSwitch && settings.ShelfMiddleSwitch && !settings.ShelfSwipeSwitch
+            && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{}") is { ShelfHoverSwitch: false, ShelfMiddleSwitch: true, ShelfSwipeSwitch: false }
+            && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{\"ShelfHoverSwitch\":true,\"ShelfMiddleSwitch\":false,\"ShelfSwipeSwitch\":true}") is { ShelfHoverSwitch: true, ShelfMiddleSwitch: false, ShelfSwipeSwitch: true }
+            && new DeckSettings { ShelfHoverSwitch = true, ShelfMiddleSwitch = false, ShelfSwipeSwitch = true }.Copy() is { ShelfHoverSwitch: true, ShelfMiddleSwitch: false, ShelfSwipeSwitch: true });
         DeckPages.SetSize(settings, DeckPage.Clipboard, 2000, 100);
         check("Shelf settings: the page's size is its own and kept within the limits", DeckPages.Size(settings, DeckPage.Clipboard) == (1200, 140) && settings.MonitorWidth == MonitorSizes.Default.Width);
         settings.ClipboardPage = false;

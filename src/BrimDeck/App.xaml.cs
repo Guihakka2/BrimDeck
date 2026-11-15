@@ -338,6 +338,8 @@ public partial class App : Application
     }
     // A panel reports display changes (monitors added or removed, the primary changed, a work area or scale changed).
     // Each panel receives the same messages, so they are handled once, after Windows has moved the windows to the new layout.
+    // The divider between the clipboard page's columns was dragged on a panel: an open settings page shows the new widths.
+    internal void ShelfShareChanged() => _settingsWindow?.ShelfShareChanged();
     internal void DisplaysChanged()
     {
         if (_arrangePending || Exiting) return;

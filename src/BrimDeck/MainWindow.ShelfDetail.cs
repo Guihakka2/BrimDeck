@@ -142,6 +142,7 @@ public partial class MainWindow
     // opening only when one of them was ended: a page closed as it was built opens as it is.
     private void ResetShelf()
     {
+        StopDeckHover();
         bool ended = _shelfEdit is not null || _shelfDetail is not null || _shelfSearching || _shelfQuery.Length > 0 || _picked.Count > 0;
         if (_shelfEdit is not null || _shelfSearching) EndTyping();
         _shelfEdit = null; _shelfDetail = null; _shelfSearching = false; _shelfQuery = ""; _picked.Clear();
@@ -543,8 +544,10 @@ public partial class MainWindow
         if (icon is not null) Lead(MenuGlyph(icon, danger ? color : Look.Secondary));
         if (star) { var mark = StarGlyph(10, Look.Secondary, filled: false); mark.Margin = new Thickness(0, 0, 7, 0); mark.VerticalAlignment = VerticalAlignment.Center; Lead(mark); }
         if (dot is not null) Lead(new Ellipse { Width = 7, Height = 7, Fill = UI.Brush(dot), Margin = new Thickness(1, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center });
-        header.Children.Add(new TextBlock { Text = label, Foreground = UI.Brush(color), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
-        var item = new MenuItem { Style = (Style)FindResource("ShelfMenuItem"), Header = header, InputGestureText = hint ?? "", IsEnabled = enabled };
+        var text = new TextBlock { Text = label, Foreground = UI.Brush(color), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        header.Children.Add(text);
+        var item = new MenuItem { Style = (Style)FindResource("ShelfMenuItem"), Header = header, InputGestureText = hint ?? "", IsEnabled = enabled, ToolTip = label };
+        item.ToolTipOpening += (_, e) => { if (!UI.IsCut(text)) e.Handled = true; };
         AutomationProperties.SetName(item, label);
         if (check == true) AutomationProperties.SetItemStatus(item, Loc.T("已选中", "Selected"));
         item.Click += (_, e) => { e.Handled = true; CloseMenu(); act(); };

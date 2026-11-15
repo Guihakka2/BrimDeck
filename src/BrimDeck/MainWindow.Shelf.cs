@@ -47,7 +47,7 @@ public partial class MainWindow
     // The details replace the page switch and the clock with their own header.
     internal bool ShelfHidesSwitch => _shelfDetail is not null;
     // The panel stays open while a menu of the page is open, while the user types in it, and while files are dragged over it.
-    internal bool ShelfHolds => _shelfMenu?.IsOpen == true || _shelfEdit is not null || _dropping || _draggingOut || _searchBox?.IsKeyboardFocusWithin == true;
+    internal bool ShelfHolds => _shelfMenu?.IsOpen == true || _shelfEdit is not null || _dropping || _draggingOut || _shareDrag is not null || _searchBox?.IsKeyboardFocusWithin == true;
     private ShelfData ShelfData => _app.Shelf.Data;
 
     private void InitializeShelf()
@@ -55,12 +55,16 @@ public partial class MainWindow
         Action changed = ShelfChanged, figures = FolderFiguresChanged;
         _app.Shelf.Changed += changed;
         ShelfFiles.Changed += figures;
-        Closed += (_, _) => { _app.Shelf.Changed -= changed; ShelfFiles.Changed -= figures; _movingTimer?.Stop(); };
+        Closed += (_, _) => { _app.Shelf.Changed -= changed; ShelfFiles.Changed -= figures; _movingTimer?.Stop(); StopDeckHover(); };
         HoverZone.AllowDrop = true;
         HoverZone.PreviewDragEnter += ShelfDragEnter;
         HoverZone.PreviewDragOver += ShelfDragOver;
         HoverZone.PreviewDragLeave += ShelfDragLeave;
         HoverZone.PreviewDrop += ShelfDrop;
+        ShelfContent.Background = Brushes.Transparent;
+        ExpandedContent.PreviewMouseDown += ShelfPreviewMouseDown;
+        ExpandedContent.PreviewMouseUp += ShelfPreviewMouseUp;
+        ExpandedContent.PreviewMouseWheel += ShelfPreviewMouseWheel;
         // A press anywhere else on the panel lets go of the search box: the keyboard goes back to the window it came from, and the
         // search and its results stay. A panel holding the keyboard for a hotkey keeps it (PanelKeyboard).
         PreviewMouseLeftButtonDown += (_, e) =>
@@ -170,11 +174,15 @@ public partial class MainWindow
         ModelToolbar.Visibility = Visibility.Collapsed; ApplicationPages.Visibility = Visibility.Collapsed;
         double width = ContentCanvas.Width, height = ContentCanvas.Height;
         if (!double.IsFinite(width) || !double.IsFinite(height)) return;
-        var layout = _shelfLayout = ShelfLayout.For(width, height);
+        var layout = _shelfLayout = ShelfLayoutFor(width, height);
         var header = PanelHeader.For(ToolbarFor(height), layout.Side);
         ApplyHeader(Settings.UsagePage ? header.WithControlsOf(CachedUsageHeader()) : header);
-        // In the lowest panels the toolbar leaves 2 DIP under the page switch (PanelHeader); the page keeps 4 more below it.
-        ShelfContent.Margin = new Thickness(layout.Side, height < 150 ? 4 : 0, layout.Side, layout.Tier == ShelfTier.Compact ? 8 : 12);
+        bool showingDetail = _shelfDetail is { } open && Find(open.Side, open.Id) is not null;
+        // In the lowest panels the toolbar leaves 2 DIP under the page switch (PanelHeader); the page keeps 4 more below it. Stacked,
+        // the cards reach out to CardSide from the panel's edges, so that the columns in them start where they do side by side.
+        ShelfContent.Margin = layout.Stacked && !showingDetail
+            ? new Thickness(layout.CardSide, (height < 150 ? 4 : 0) + layout.CardTop, layout.CardSide, layout.CardBottom)
+            : new Thickness(layout.Side, height < 150 ? 4 : 0, layout.Side, layout.Tier == ShelfTier.Compact ? 8 : 12);
         var build = new ShelfBuild(width, height, Settings, Look.Generation, Loc.Language, DateTime.Now.Ticks / TimeSpan.TicksPerMinute, VisualTreeHelper.GetDpi(this).DpiScaleY, _scale);
         bool keep = lazy && !_shelfStale && build == _shelfBuilt && ShelfContent.Children.Count > 0;
         if (lazy && !keep && !_expanded && !_preview) { _shelfStale = true; return; }
@@ -188,34 +196,32 @@ public partial class MainWindow
         }
         // The header's own parts are set again either way: another page shown meanwhile has hidden them.
         RenderShelfToolbar(width);
-        if (_shelfDetail is { } detail && Find(detail.Side, detail.Id) is not null) { if (!keep) ShelfContent.Children.Add(DetailView(detail.Side, detail.Id, width - 2 * layout.Side, layout)); return; }
+        if (showingDetail) { _deck = null; if (!keep) ShelfContent.Children.Add(DetailView(_shelfDetail!.Value.Side, _shelfDetail.Value.Id, width - 2 * layout.Side, layout)); return; }
         _shelfDetail = null;
         RenderPageSwitch();
         if (keep) return;
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(layout.Gap) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(layout.FileColumn) });
-        var clips = ClipColumn(layout);
-        var divider = new Border { Width = 1, Background = UI.Brush(Look.Hairline), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 4) };
-        Grid.SetColumn(divider, 1);
-        var files = FileColumn(layout);
-        Grid.SetColumn(files, 2);
-        grid.Children.Add(clips); grid.Children.Add(divider); grid.Children.Add(files);
-        ShelfContent.Children.Add(grid);
+        // Side by side or stacked as cards (MainWindow.ShelfArrange.cs).
+        ShelfContent.Children.Add(ShelfColumns(layout));
         RefocusTyping();
     }
-    // During a resize the page is built again only where its sizes step (row height, type size, what the file rows show); in between
-    // the file column takes the width the new size gives it and the clipboard column the rest. The details keep the width they were
-    // built for until the drag ends.
+    // During a resize, and while the divider between the columns is dragged, the page is built again only where its sizes step (row
+    // height, type size, what the file rows show); in between the file column takes the width the new size gives it and the clipboard
+    // column the rest. Stacked, both cards stretch by themselves. The details keep the width they were built for until the drag ends.
     private void StretchShelf()
     {
         if (_shelfDetail is not null) return;
         double width = ContentCanvas.Width, height = ContentCanvas.Height;
         if (!double.IsFinite(width) || !double.IsFinite(height)) return;
-        var layout = ShelfLayout.For(width, height);
-        if (layout with { FileColumn = 0, ClipColumn = 0 } != _shelfLayout with { FileColumn = 0, ClipColumn = 0 }) { RenderShelf(); return; }
+        var layout = ShelfLayoutFor(width, height);
+        bool stepped = layout with { FileColumn = 0, ClipColumn = 0 } != _shelfLayout with { FileColumn = 0, ClipColumn = 0 };
+        // While the divider is dragged, or the widths' slider in the settings, a step in what the file rows show does not build the
+        // page at once: building takes long enough to be felt as a hitch in the drag. The columns keep following the pointer, and
+        // the page is built once the pointer rests or the drag ends (SettleShare).
+        bool dragged = _shareDrag is not null && !layout.Stacked && !_shelfLayout.Stacked && layout.Tier == _shelfLayout.Tier;
+        if (stepped && !dragged) { RenderShelf(); return; }
+        if (stepped) SettleShare(); else _shelfLayout = layout;
+        if (layout.Stacked) { PlaceDeck(); return; }
         if (ShelfContent.Children.Count == 1 && ShelfContent.Children[0] is Grid { ColumnDefinitions.Count: 3 } grid)
             grid.ColumnDefinitions[2].Width = new GridLength(layout.FileColumn);
     }
@@ -284,7 +290,8 @@ public partial class MainWindow
         // The list stays visible. It stands clear of the rows: up into the gap under the filters, and out to the left past a row's
         // background (8 DIP left of the text) to 12 DIP from the icons, stopping 4 DIP short of the divider in the gap between the
         // columns; on the right, the same distance from the text, whose row ends 4 DIP past it.
-        double corner = Look.Corner(8), left = Math.Min(12, layout.Gap / 2 - 4);
+        // Stacked, it stays inside the card's padding.
+        double corner = Look.Corner(8), left = layout.Stacked ? Math.Min(12, layout.CardPad - 3) : Math.Min(12, layout.Gap / 2 - 4);
         var frame = new Rectangle { RadiusX = corner, RadiusY = corner, StrokeThickness = 1, StrokeDashArray = [4, 3], Margin = new Thickness(-left, -ListGap, -(left - 4), -4), IsHitTestVisible = false };
         Grid.SetRow(frame, 1); column.Children.Add(frame); _fileFrame = frame; ShowDropFrame();
         column.Children.Add(ColumnHeader(ShelfSide.Files, layout.FileColumn, layout));
@@ -381,6 +388,8 @@ public partial class MainWindow
         Grid.SetColumn(buttons, 1);
         row.Children.Add(tabs); row.Children.Add(buttons);
         var title = Label(name, layout.Title, Look.Primary, HorizontalAlignment.Left); title.FontWeight = FontWeights.SemiBold;
+        // Stacked, a click on the title brings the other card forward (MainWindow.ShelfArrange.cs); it looks as it does side by side.
+        if (layout.Stacked) SwitchTitle(title, side);
         tabs.Children.Add(title);
         if (Searching)
         {
@@ -505,6 +514,16 @@ public partial class MainWindow
         var picker = new Border { Height = 22, CornerRadius = new CornerRadius(Look.Corner(6)), Child = face, Background = Brushes.Transparent, Cursor = Cursors.Hand,
             VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(picker, Loc.T("分类：", "Categories: ") + text);
+        if (shown is not null)
+        {
+            picker.ToolTip = shown.Name;
+            picker.ToolTipOpening += (_, e) =>
+            {
+                if (label.Parent is not null && label.IsVisible && label.ActualWidth >= .5
+                    && TextWidth(shown.Name, layout.Body, FontWeights.Normal) <= label.ActualWidth + .5)
+                    e.Handled = true;
+            };
+        }
         picker.MouseEnter += (_, _) => { label.Foreground = UI.Brush(Look.Primary); chevron.Foreground = UI.Brush(Look.Primary); };
         picker.MouseLeave += (_, _) => { label.Foreground = UI.Brush(shown is null ? Look.Tertiary : Look.Primary); chevron.Foreground = UI.Brush(Look.Secondary); };
         picker.MouseLeftButtonUp += (_, e) => { e.Handled = true; OpenMenu(CategoryListMenu(side), picker); };
@@ -574,6 +593,12 @@ public partial class MainWindow
             VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand, AllowDrop = true
         };
         AutomationProperties.SetName(tab, text);
+        tab.ToolTip = text;
+        tab.ToolTipOpening += (_, e) =>
+        {
+            if (!label.IsVisible || TextWidth(text, layout.Body, FontWeights.Normal) <= label.ActualWidth + .5)
+                e.Handled = true;
+        };
         if (selected) AutomationProperties.SetItemStatus(tab, Loc.T("已选中", "Selected"));
         _shelfTabs.Add((tab, id, side));
         tab.MouseEnter += (_, _) => label.Foreground = UI.Brush(Look.Primary);
@@ -1156,6 +1181,8 @@ public partial class MainWindow
         _dropLeave?.Stop();
         if (!_dropping) return;
         _dropping = false;
+        // Stacked, the file transfer stays in front once files are dropped; taken away, the card that was in front comes back.
+        if (dropped) _shelfFront = ShelfSide.Files;
         if (!dropped)
         {
             if (_dropOpened) { _dropOpened = false; if (!_pointerInside) SetExpanded(false); }

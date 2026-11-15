@@ -237,8 +237,8 @@ public partial class MainWindow : Window
             const int DisplayChange = 0x007E, SettingChange = 0x001A, SetWorkArea = 0x002F, Wheel = 0x020A, SideWheel = 0x020E;
             if (message == DisplayChange || message == SettingChange && wParam == SetWorkArea) _app.DisplaysChanged();
             // WPF has no event for the horizontal wheel; the vertical one is only noted, and WPF still handles it.
-            else if (message == Wheel) _swipe.Vertical(DateTimeOffset.UtcNow);
-            else if (message == SideWheel) handled = MusicWheelSwipe(unchecked((short)((long)wParam >> 16)));
+            else if (message == Wheel) { _swipe.Vertical(DateTimeOffset.UtcNow); if (!Native.PasteInput.KeyDown(0x10)) _shelfSwipe.Vertical(DateTimeOffset.UtcNow); }
+            else if (message == SideWheel) { int delta = unchecked((short)((long)wParam >> 16)); handled = MusicWheelSwipe(delta) || ShelfWheelSwipe(delta); }
             return IntPtr.Zero;
         });
         Closed += (_, _) => DisposeMusic();
@@ -672,7 +672,7 @@ public partial class MainWindow : Window
     {
         System.Windows.Automation.AutomationProperties.SetName(AIUsageButton, Loc.T("AI 用量", "AI usage"));
         System.Windows.Automation.AutomationProperties.SetName(MonitorPageButton, Loc.T("系统监控", "System monitor"));
-        System.Windows.Automation.AutomationProperties.SetName(ShelfPageButton, Loc.T("剪贴板与文件中转", "Clipboard and file transfer"));
+        UpdateShelfPageButton();
         System.Windows.Automation.AutomationProperties.SetName(ShelfSearchButton, Loc.T("搜索剪贴板与文件中转", "Search the clipboard and file transfer"));
         System.Windows.Automation.AutomationProperties.SetName(DevicesPageButton, Loc.T("设备电量", "Device batteries"));
         System.Windows.Automation.AutomationProperties.SetName(MusicPageButton, Loc.T("音乐", "Music"));
