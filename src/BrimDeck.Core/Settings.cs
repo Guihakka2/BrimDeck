@@ -1012,7 +1012,14 @@ public sealed class SettingsStore(string directory, string? appVersion = null)
     // True when the last Load found no settings file, or none it could read, and returned defaults.
     public bool IsFirstStart { get; private set; }
     // Without saved settings the interface follows the Windows display language; saved settings keep their language.
-    private DeckSettings FirstStart() { IsFirstStart = true; return new() { Language = Loc.SystemLanguage() }; }
+    // Normalized as read settings are: the start relies on what Normalize ensures, such as one current profile (Profiles.Keep).
+    private DeckSettings FirstStart()
+    {
+        IsFirstStart = true;
+        var settings = new DeckSettings { Language = Loc.SystemLanguage() };
+        settings.Normalize();
+        return settings;
+    }
     public DeckSettings Load()
     {
         _snapshots = []; _newerFile = null; _unknown = []; IsFirstStart = false; _loadWarning = null;
