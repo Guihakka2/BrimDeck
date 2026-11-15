@@ -202,6 +202,11 @@ internal static class ShelfTests
             && ShelfLayout.For(440, 140, 40, stacked: true) is { FileColumn: 440 - 2 * 14 - 44, Peek: 44, CardTop: 2, CardBottom: 6, CardPad: 7, CardSide: 6 }
             && ShelfLayout.For(860, 320, 40, stacked: true) is { FileColumn: 860 - 2 * 24 - 56, Peek: 56, CardTop: 2, CardBottom: 8, CardPad: 11, CardSide: 12 }
             && ShelfLayout.For(620, 220) is { Stacked: false, Peek: 0, CardTop: 0, CardBottom: 0, CardPad: 0, CardSide: 0 });
+        // One column only: it takes the whole room between the margins, and the page is never stacked.
+        check("Shelf layout: one column alone fills the page and is never stacked",
+            ShelfLayout.For(620, 220, 40, shown: ShelfShown.Clipboard) is { ClipColumn: 620 - 2 * 20, FileColumn: 0, Stacked: false }
+            && ShelfLayout.For(620, 220, 40, stacked: true, shown: ShelfShown.Files) is { FileColumn: 620 - 2 * 20, ClipColumn: 0, Stacked: false, Peek: 0 }
+            && ShelfLayout.For(1200, 400, 40, shown: ShelfShown.Files) is { FileSize: true, FileDate: true });
         // Stacked, the card in front leaves the other's strip showing, and the other is that strip and what lies under the card in front.
         check("Shelf deck: the card in front is the page less the strip, the other the strip and 12 more; the two trade widths",
             ShelfDeck.Widths(ShelfSide.Clipboard, 580, 50) == (530, 62) && ShelfDeck.Widths(ShelfSide.Files, 580, 50) == (62, 530)
@@ -238,6 +243,17 @@ internal static class ShelfTests
             && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{}") is { ShelfHoverSwitch: false, ShelfMiddleSwitch: true, ShelfSwipeSwitch: false }
             && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{\"ShelfHoverSwitch\":true,\"ShelfMiddleSwitch\":false,\"ShelfSwipeSwitch\":true}") is { ShelfHoverSwitch: true, ShelfMiddleSwitch: false, ShelfSwipeSwitch: true }
             && new DeckSettings { ShelfHoverSwitch = true, ShelfMiddleSwitch = false, ShelfSwipeSwitch = true }.Copy() is { ShelfHoverSwitch: true, ShelfMiddleSwitch: false, ShelfSwipeSwitch: true });
+        var unknownShown = new DeckSettings { ShelfShown = (ShelfShown)9 };
+        unknownShown.Normalize();
+        check("Shelf settings: both columns by default; an unknown choice shows both; stacking and the transfer count follow the columns shown",
+            settings.ShelfShown == ShelfShown.Both && unknownShown.ShelfShown == ShelfShown.Both
+            && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{}") is { ShelfShown: ShelfShown.Both }
+            && System.Text.Json.JsonSerializer.Deserialize<DeckSettings>("{\"ShelfShown\":2}") is { ShelfShown: ShelfShown.Files }
+            && new DeckSettings { ShelfShown = ShelfShown.Files }.Copy() is { ShelfShown: ShelfShown.Files }
+            && new DeckSettings { ShelfArrangement = ShelfArrangement.Stacked }.ShelfStacked()
+            && !new DeckSettings { ShelfArrangement = ShelfArrangement.Stacked, ShelfShown = ShelfShown.Clipboard }.ShelfStacked()
+            && !new DeckSettings { ShelfShown = ShelfShown.Clipboard }.ShowsTransfer(CompactStyle.Notch)
+            && new DeckSettings { ShelfShown = ShelfShown.Files }.ShowsTransfer(CompactStyle.Notch));
         DeckPages.SetSize(settings, DeckPage.Clipboard, 2000, 100);
         check("Shelf settings: the page's size is its own and kept within the limits", DeckPages.Size(settings, DeckPage.Clipboard) == (1200, 140) && settings.MonitorWidth == MonitorSizes.Default.Width);
         settings.ClipboardPage = false;

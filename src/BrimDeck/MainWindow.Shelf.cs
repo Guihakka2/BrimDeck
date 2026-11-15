@@ -1121,7 +1121,8 @@ public partial class MainWindow
     private void ShelfDragEnter(object sender, DragEventArgs e)
     {
         _dropLeave?.Stop();
-        if (_draggingOut || !Settings.ClipboardPage || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        // Showing the clipboard alone, files dragged over the panel have nowhere to go.
+        if (_draggingOut || !Settings.ClipboardPage || Settings.ShelfShown == ShelfShown.Clipboard || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
         e.Effects = DragDropEffects.Copy; e.Handled = true;
         if (_dropping) return;
         _dropping = true;

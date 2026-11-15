@@ -404,7 +404,8 @@ public static class Shelf
 // enough. Stacked (ShelfArrangement.Stacked), the two columns are cards of one width (ShelfDeck). The cards reach out past the
 // page's margins, to CardSide from the panel's edges, so that a column in its card (CardPad and the card's edge inside it) starts
 // where it does side by side, at Side; the card in front leaves the side strip of the other showing (Peek). The cards start
-// CardTop below the toolbar and end CardBottom above the panel's bottom edge.
+// CardTop below the toolbar and end CardBottom above the panel's bottom edge. Showing one column only (ShelfShown), it takes the
+// whole room between the margins and the other is 0 wide; it is never stacked.
 public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double Header, double Row, double Body, double Aux, double Title,
     double FileColumn, double ClipColumn, bool FileSize, bool FileDate, bool TwoLines, double Thumb, double ThumbHeight, double Icon, double DetailBody,
     bool Stacked = false, double Peek = 0, double CardTop = 0, double CardBottom = 0, double CardPad = 0, double CardSide = 0)
@@ -414,8 +415,9 @@ public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double
     // The narrowest the columns are made side by side.
     public const double MinFile = 170, MinClip = 180;
 
-    public static ShelfLayout For(double width, double height, double share = DefaultShare, bool stacked = false)
+    public static ShelfLayout For(double width, double height, double share = DefaultShare, bool stacked = false, ShelfShown shown = ShelfShown.Both)
     {
+        stacked &= shown == ShelfShown.Both;
         var tier = height < 180 ? ShelfTier.Compact : height < 280 ? ShelfTier.Standard : ShelfTier.Spacious;
         var (side, gap, header, row, body, aux, title) = tier switch
         {
@@ -434,6 +436,11 @@ public sealed record ShelfLayout(ShelfTier Tier, double Side, double Gap, double
         double files, clips;
         if (stacked)
             files = clips = Math.Max(0, width - 2 * cardSide - peek - 2 * (pad + 1));
+        else if (shown != ShelfShown.Both)
+        {
+            double whole = Math.Max(0, width - 2 * side);
+            files = shown == ShelfShown.Files ? whole : 0; clips = shown == ShelfShown.Clipboard ? whole : 0;
+        }
         else
         {
             double inner = Math.Max(0, width - 2 * side - gap);
@@ -488,5 +495,8 @@ public static class ShelfDeck
 // How the page shows its two columns: side by side with a divider between them, or as two cards, one in front over most of the
 // width and the other behind it, showing only its side strip (the clipboard at the left, the file transfer at the right).
 public enum ShelfArrangement { Split, Stacked }
+
+// Which of the page's columns are shown: both, or one of them over the whole width.
+public enum ShelfShown { Both, Clipboard, Files }
 
 public enum ShelfTier { Compact, Standard, Spacious }

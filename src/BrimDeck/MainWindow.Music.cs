@@ -186,7 +186,7 @@ public partial class MainWindow
     private void MonitorPage_Click(object sender, RoutedEventArgs e) => SelectPage(DeckPage.Monitor);
     private void ShelfPage_Click(object sender, RoutedEventArgs e)
     {
-        if (IsShelfPage && Settings.ShelfArrangement == ShelfArrangement.Stacked && _shelfDetail is null && _shelfEdit is null && !_dropping)
+        if (IsShelfPage && Settings.ShelfStacked() && _shelfDetail is null && _shelfEdit is null && !_dropping)
         {
             BringForward(ShelfFront == ShelfSide.Clipboard ? ShelfSide.Files : ShelfSide.Clipboard);
             return;

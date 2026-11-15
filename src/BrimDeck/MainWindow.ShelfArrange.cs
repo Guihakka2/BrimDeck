@@ -36,7 +36,7 @@ public partial class MainWindow
     private (Border Grip, Action<bool> Show)? _divider;
 
     private ShelfLayout ShelfLayoutFor(double width, double height) =>
-        ShelfLayout.For(width, height, _shareDrag ?? Settings.ShelfFileShare, Settings.ShelfArrangement == ShelfArrangement.Stacked);
+        ShelfLayout.For(width, height, _shareDrag ?? Settings.ShelfFileShare, Settings.ShelfStacked(), Settings.ShelfShown);
 
     private ShelfSide ShelfFront => _shelfEdit is not null ? ShelfSide.Clipboard : _dropping ? ShelfSide.Files : _shelfFront;
 
@@ -52,6 +52,9 @@ public partial class MainWindow
     {
         if (layout.Stacked) return StackedColumns(layout);
         _deck = null; _shelfBuiltFront = null;
+        // One column only (DeckSettings.ShelfShown): it takes the whole page, with no divider.
+        if (Settings.ShelfShown == ShelfShown.Clipboard) return ClipColumn(layout);
+        if (Settings.ShelfShown == ShelfShown.Files) return FileColumn(layout);
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(layout.Gap) });
@@ -154,7 +157,7 @@ public partial class MainWindow
     // saved; null when the drag has ended (the settings save the share themselves).
     internal void PreviewShelfShare(double? share)
     {
-        _shareDrag = share is { } value && Settings.ShelfArrangement == ShelfArrangement.Split ? ShelfLayout.ClampShare(Math.Round(value, 1)) : null;
+        _shareDrag = share is { } value && Settings.ShelfShown == ShelfShown.Both && Settings.ShelfArrangement == ShelfArrangement.Split ? ShelfLayout.ClampShare(Math.Round(value, 1)) : null;
         if (IsShelfPage && (_expanded || _preview)) StretchShelf();
     }
     // The double-click: the default share, at once.
@@ -215,7 +218,9 @@ public partial class MainWindow
 
     internal void UpdateShelfPageButton()
     {
-        if (IsShelfPage && Settings.ShelfArrangement == ShelfArrangement.Stacked && !ShelfHidesSwitch)
+        // The search covers the columns shown.
+        AutomationProperties.SetName(ShelfSearchButton, ShelfSearchName);
+        if (IsShelfPage && Settings.ShelfStacked() && !ShelfHidesSwitch)
         {
             bool filesFront = ShelfFront == ShelfSide.Files;
             ShelfPageIcon.Data = filesFront ? TrayPageIcon : ClipboardPageIcon;
@@ -224,14 +229,27 @@ public partial class MainWindow
             ShelfPageButton.ToolTip = label;
             return;
         }
-        ShelfPageIcon.Data = ClipboardPageIcon;
-        AutomationProperties.SetName(ShelfPageButton, Loc.T("剪贴板与文件中转", "Clipboard and file transfer"));
+        // Showing the file transfer alone, the page's button is its tray.
+        ShelfPageIcon.Data = Settings.ShelfShown == ShelfShown.Files ? TrayPageIcon : ClipboardPageIcon;
+        AutomationProperties.SetName(ShelfPageButton, Settings.ShelfShown switch
+        {
+            ShelfShown.Clipboard => Loc.T("剪贴板", "Clipboard"),
+            ShelfShown.Files => Loc.T("文件中转", "File transfer"),
+            _ => Loc.T("剪贴板与文件中转", "Clipboard and file transfer")
+        });
         ShelfPageButton.ToolTip = null;
     }
 
+    private string ShelfSearchName => Settings.ShelfShown switch
+    {
+        ShelfShown.Clipboard => Loc.T("搜索剪贴板", "Search the clipboard"),
+        ShelfShown.Files => Loc.T("搜索文件中转", "Search the file transfer"),
+        _ => Loc.T("搜索剪贴板与文件中转", "Search the clipboard and file transfer")
+    };
+
     private void StopDeckHover() => _deckHoverTimer?.Stop();
 
-    private bool CanQuickSwitchShelf => _expanded && !_preview && IsShelfPage && Settings.ShelfArrangement == ShelfArrangement.Stacked
+    private bool CanQuickSwitchShelf => _expanded && !_preview && IsShelfPage && Settings.ShelfStacked()
         && _shelfDetail is null && _shelfEdit is null && !_dropping && _shelfMenu?.IsOpen != true;
 
     private static bool IsLightColor(Color color) => (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) > 140;

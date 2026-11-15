@@ -2,6 +2,8 @@
 
 The "Clipboard and file transfer" page of the open panel has two columns: the clipboard history on the left and the file transfer on the right. Their settings are under Settings › Clipboard and Settings › File transfer; the page's switch and size are under Settings › Expanded view.
 
+Under Settings › Page layout › Show the page can show only the clipboard or only the file transfer, which then fills the page. While only the clipboard shows, files dragged onto the panel are not added to the file transfer, and the collapsed view does not show their number. The arrangements below apply only while both columns show.
+
 Drag the divider between the columns to change their widths; double-click it to go back to 60% for the clipboard and 40% for the file transfer. Under Settings › Page layout the columns can also be stacked as two cards, the one behind showing only a side strip with its icon, name and number of entries. Click that strip, the title of the card in front, or the page's button once more to switch cards. Three more ways of switching can be turned on under Settings › Page layout: hovering the pointer over the strip, a middle click (on by default), and a two-finger sideways swipe or Shift + wheel.
 
 ## Clipboard

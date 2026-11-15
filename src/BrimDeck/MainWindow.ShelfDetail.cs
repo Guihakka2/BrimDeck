@@ -78,7 +78,15 @@ public partial class MainWindow
                 Stretch = Stretch.Uniform, Width = 12, Height = 12, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 0, 0), IsHitTestVisible = false });
             // The text starts 28 in (the box's padding 26 and the text box's own 2), where the caret blinks; the hint starts just after
             // it, so the caret does not cross its first letter.
-            var hint = Label(Loc.T("搜索剪贴板与文件", "Search clipboard and files"), 12.5, Look.Tertiary, HorizontalAlignment.Left, left: 30);
+            // It names the columns shown (DeckSettings.ShelfShown), and so does the box.
+            string what = Settings.ShelfShown switch
+            {
+                ShelfShown.Clipboard => Loc.T("搜索剪贴板", "Search clipboard"),
+                ShelfShown.Files => Loc.T("搜索文件", "Search files"),
+                _ => Loc.T("搜索剪贴板与文件", "Search clipboard and files")
+            };
+            AutomationProperties.SetName(box, what);
+            var hint = Label(what, 12.5, Look.Tertiary, HorizontalAlignment.Left, left: 30);
             hint.IsHitTestVisible = false; hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; hint.Tag = "hint";
             host.Children.Add(hint);
             ShelfToolbar.Children.Add(host);
@@ -104,7 +112,6 @@ public partial class MainWindow
     private TextBox NewSearchBox()
     {
         var box = new TextBox { Style = (Style)FindResource("ShelfTextBox") };
-        AutomationProperties.SetName(box, Loc.T("搜索剪贴板与文件", "Search clipboard and files"));
         TakeKeyboardOnClick(box);
         box.TextChanged += (_, _) =>
         {

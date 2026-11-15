@@ -8,8 +8,9 @@ using BrimDeck.Core;
 
 namespace BrimDeck;
 
-// "页面布局", first in the clipboard's group ("中转站"): how the clipboard and file transfer page shows its two columns, chosen on
-// cards with a diagram of each arrangement (ShelfArrangementPreview). Under the cards stand the settings of the arrangement
+// "页面布局", first in the clipboard's group ("中转站"): which columns the clipboard and file transfer page shows, and, when it
+// shows both, how it arranges them, chosen on cards with a diagram of each arrangement (ShelfArrangementPreview). With one column
+// there is nothing to arrange, so the arrangement and its settings are hidden. Under the cards stand the settings of the arrangement
 // chosen, and only those, as on the collapsed view's page: side by side, how the width is shared between the columns, which
 // dragging the divider on the panel also sets; stacked, the further ways of bringing the other card forward
 // (MainWindow.ShelfArrange.cs).
@@ -21,6 +22,21 @@ public partial class SettingsWindow
         arrangement == ShelfArrangement.Split ? Loc.T("并排", "Side by side") : Loc.T("叠放", "Stacked");
 
     private void ShelfLayoutSettings()
+    {
+        FrameworkElement? arranging = null;
+        Group(MusicChoice(Loc.T("显示内容", "Show"), S.ShelfShown,
+            [(ShelfShown.Clipboard, Loc.T("剪贴板", "Clipboard")), (ShelfShown.Files, Loc.T("文件中转", "File transfer")), (ShelfShown.Both, Loc.T("都显示", "Both"))],
+            value =>
+            {
+                Change(s => s.ShelfShown = value);
+                if (arranging is not null) arranging.Visibility = value == ShelfShown.Both ? Visibility.Visible : Visibility.Collapsed;
+            }));
+        arranging = Collect(Arrangement);
+        arranging.Visibility = S.ShelfShown == ShelfShown.Both ? Visibility.Visible : Visibility.Collapsed;
+        Target.Children.Add(arranging);
+    }
+
+    private void Arrangement()
     {
         SectionTitle(Loc.T("排列方式", "Arrangement"));
         // Two cards over the whole row, as the collapsed style's three are, with the same room for the focus ring. Their diagrams

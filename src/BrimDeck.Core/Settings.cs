@@ -620,8 +620,10 @@ public sealed class DeckSettings
     public bool ClipboardKeepHistory { get; set; }
     public HistoryLength ClipboardKeepFor { get; set; } = HistoryLength.Month;
     public TransferDragOut TransferDragOut { get; set; } = TransferDragOut.Copy;
-    // The page's two columns side by side or stacked as cards (ShelfLayout), and side by side the file transfer's share of the width
-    // in percent, set by dragging the divider between them or in the settings.
+    // Which columns the page shows: both, or only the clipboard or only the file transfer over the whole width. Only with both are
+    // they arranged (ShelfArrangement): side by side or stacked as cards (ShelfLayout), and side by side the file transfer's share
+    // of the width in percent, set by dragging the divider between them or in the settings.
+    public ShelfShown ShelfShown { get; set; } = ShelfShown.Both;
     public ShelfArrangement ShelfArrangement { get; set; } = ShelfArrangement.Split;
     public double ShelfFileShare { get; set; } = ShelfLayout.DefaultShare;
     // Stacked, further ways to bring the card behind forward, besides a click on its side strip, on the title of the card in
@@ -756,8 +758,10 @@ public sealed class DeckSettings
     // The indicator is too thin for readings, as for the clock.
     public bool ShowsMonitor(CompactStyle style) => style switch { CompactStyle.Notch => NotchMonitor, CompactStyle.Capsule => CapsuleMonitor, _ => false };
     public bool ShowsDevices(CompactStyle style) => style switch { CompactStyle.Notch => NotchDevices, CompactStyle.Capsule => CapsuleDevices, _ => false };
-    // The file transfer's count needs the page: with the page off, nothing can be dropped there.
-    public bool ShowsTransfer(CompactStyle style) => ClipboardPage && style switch { CompactStyle.Notch => NotchTransfer, CompactStyle.Capsule => CapsuleTransfer, _ => false };
+    // The file transfer's count needs the page and its column: with either hidden, nothing can be dropped there.
+    public bool ShowsTransfer(CompactStyle style) => ClipboardPage && ShelfShown != ShelfShown.Clipboard && style switch { CompactStyle.Notch => NotchTransfer, CompactStyle.Capsule => CapsuleTransfer, _ => false };
+    // The page's columns are stacked as cards only while it shows both.
+    public bool ShelfStacked() => ShelfShown == ShelfShown.Both && ShelfArrangement == ShelfArrangement.Stacked;
     public IReadOnlyList<CompactPart> CompactOrder(CompactStyle style) => style == CompactStyle.Capsule ? CapsuleOrder : NotchOrder;
     public void SetCompactOrder(CompactStyle style, IEnumerable<CompactPart> order) { if (style == CompactStyle.Notch) NotchOrder = [.. order]; else if (style == CompactStyle.Capsule) CapsuleOrder = [.. order]; }
     public bool CompactAutoWidth(CompactStyle style) => style switch { CompactStyle.Notch => NotchAutoWidth, CompactStyle.Capsule => CapsuleAutoWidth, _ => false };
@@ -890,6 +894,7 @@ public sealed class DeckSettings
         ClipboardWidth = double.IsFinite(ClipboardWidth) ? Math.Clamp(ClipboardWidth, DeckPages.MinWidth, DeckPages.MaxWidth) : ShelfSizes.Default.Width;
         ClipboardHeight = double.IsFinite(ClipboardHeight) ? Math.Clamp(ClipboardHeight, DeckPages.MinHeight, DeckPages.MaxHeight) : ShelfSizes.Default.Height;
         if (!Enum.IsDefined(TransferDragOut)) TransferDragOut = TransferDragOut.Copy;
+        if (!Enum.IsDefined(ShelfShown)) ShelfShown = ShelfShown.Both;
         if (!Enum.IsDefined(ShelfArrangement)) ShelfArrangement = ShelfArrangement.Split;
         ShelfFileShare = ShelfLayout.ClampShare(Math.Round(ShelfFileShare, 1));
         if (!Enum.IsDefined(ClipboardKeepFor)) ClipboardKeepFor = HistoryLength.Month;
