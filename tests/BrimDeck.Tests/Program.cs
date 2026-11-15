@@ -107,6 +107,7 @@ try
     await DshUsageTests.Run(root, Check);
     await KimiUsageTests.Run(root, Check);
     await ClaudeRateLimitTests.Run(root, Check);
+    await ClaudeUpgradeCacheTests.Run(root, Check);
     await UsageStartupTests.Run(root, Check);
     UsageLastSeenTests.Run(root, Check);
     await OpenCodeUsageTests.Run(root, Check);
