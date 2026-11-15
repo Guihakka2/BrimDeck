@@ -703,6 +703,9 @@ public sealed class DeckSettings
     public int NoticeHighDuration { get; set; } = 8;
     public NoticeScreen NoticeScreen { get; set; }
     public NoticePrivacy NoticePrivacy { get; set; }
+    // Recognises a verification code in a notice, hides it wherever the notice is shown and offers a button that copies it (see
+    // NoticeCodes). Off by default: it reads the notices' words and, on a click, writes the clipboard.
+    public bool NoticeCodes { get; set; }
     // Holds notices back during a Windows focus session or presentation mode.
     public bool NoticeRespectFocus { get; set; } = true;
     // Notices are held back until this time (BrimDeck's own pause); null when not paused.
