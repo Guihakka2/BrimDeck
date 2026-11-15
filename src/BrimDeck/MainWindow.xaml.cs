@@ -818,7 +818,7 @@ public partial class MainWindow : Window
         _expanded = expanded;
         // The smooth memory mode holds off full collections while a panel is open (App.UpdateCollectionLatency).
         if (expanded && !wasExpanded) _app.UpdateCollectionLatency();
-        _escapeDismissal?.SetEnabled(expanded && !_preview || _moveArmed);
+        _escapeDismissal?.SetEnabled(HoldsEscape);
         if (!expanded) { CloseSourceMenu(); _popupReturnArea = null; _leave.Stop(); _pageSwitchHold.Stop(); _detailPopup?.Close(); }
         if (wasExpanded && !expanded) PanelClosed();
         Collapsed = ShapeFor(EffectiveStyle);
