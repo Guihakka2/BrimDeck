@@ -43,6 +43,11 @@ public static class CompactFigures
     public static (double Share, MemoryLevel Level)? Memory(CompactMonitorItems item, MonitorSnapshot? snapshot) =>
         item == CompactMonitorItems.Gpu && snapshot?.Gpu.OrDefault is { NoReadings: false } gpu && gpu.DedicatedFraction is { } share ? (share, ReadingLevels.OfShare(share)) : null;
 
+    // Whether the graphics adapter is known to have no memory share to show: it has no dedicated memory size (an adapter without
+    // memory of its own, one Windows gives no size for). The size stays while the adapter sleeps, so a share missing for a moment
+    // is not this; the temperature sensor plays no part.
+    public static bool MemoryMissing(MonitorSnapshot? snapshot) => snapshot?.Gpu.OrDefault is { DedicatedTotal: null or 0 };
+
     // A ring's temperature in this snapshot and its level; null while it has none.
     public static (double Celsius, MemoryLevel Level)? Heat(CompactMonitorItems item, MonitorSnapshot? snapshot) => item switch
     {
