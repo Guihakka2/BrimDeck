@@ -61,6 +61,14 @@ internal static class MusicTests
             && song.Around(5.5, 1, 2) is { Current: "五", Before: ["四"], After: [] }
             && song.Around(0, 2, 1) is { Current: "♪", Before: [], After: ["一"] }
             && song.At(3.5) == ("二", "三", "四") && song.At(0) == ("", "♪", "一") && plain.Around(0, 2, 2) == LyricWindow.Empty);
+        var hold = new LyricHold();
+        check("A small step back of the position keeps the line just started (issue 263)",
+            song.At(3.1, hold).Current == "三" && song.At(2.9, hold).Current == "三" && song.Around(2.2, 1, 1, hold).Current == "三" && song.At(3.2, hold).Current == "三");
+        check("A step back of LyricHold.StepBack or more is a seek and shows the earlier line",
+            song.At(1.4, hold).Current == "一" && song.At(4.2, hold).Current == "四" && song.At(1, hold).Current == "一");
+        var fresh = Lyrics.Parse("[00:01]一\n[00:02]二\n[00:03]三\n[00:04]四\n[00:05]五", null, 10, "test");
+        check("New lyrics start afresh, and the hold never moves a line forward", song.At(4.5, hold).Current == "四" && fresh.At(2.5, hold).Current == "二"
+            && fresh.At(3.5, hold).Current == "三");
         using var handler = new LyricsHandler(); using var http = new HttpClient(handler); using var service = new LyricsService(http);
         check("Lyrics disabled sends no request", (await service.FindAsync(track, false, default)).Lines.Count == 0 && handler.Calls == 0);
         var result = await service.FindAsync(track, true, default);

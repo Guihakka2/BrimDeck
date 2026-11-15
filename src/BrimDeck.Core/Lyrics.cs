@@ -19,15 +19,16 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
     public const double AppleLead = 0.2;
     public bool QqPreview { get; init; }
     public bool CanSynchronize(MediaTrack track) => Synced && track.HasTimeline;
-    public (string Previous, string Current, string Next) At(MediaTrack track, DateTimeOffset now) => Nearest(Around(track, now, 1, 1));
-    public (string Previous, string Current, string Next) At(double seconds) => Nearest(Around(seconds, 1, 1));
+    public (string Previous, string Current, string Next) At(MediaTrack track, DateTimeOffset now, LyricHold? hold = null) => Nearest(Around(track, now, 1, 1, hold));
+    public (string Previous, string Current, string Next) At(double seconds, LyricHold? hold = null) => Nearest(Around(seconds, 1, 1, hold));
     private static (string Previous, string Current, string Next) Nearest(LyricWindow window)
         => (window.Before.Count > 0 ? window.Before[^1] : "", window.Current, window.After.Count > 0 ? window.After[0] : "");
     // The current line with up to before lines above it and after lines below it, in the order they are sung.
-    public LyricWindow Around(MediaTrack track, DateTimeOffset now, int before, int after)
+    // hold: keeps the line on show through a small step back of the position (LyricHold).
+    public LyricWindow Around(MediaTrack track, DateTimeOffset now, int before, int after, LyricHold? hold = null)
     {
         if (!CanSynchronize(track)) return LyricWindow.Empty;
-        if (!QqPreview || !track.IsQqMusic) return Around(track.Position(now).TotalSeconds + (track.IsAppleMusic ? AppleLead : 0), before, after);
+        if (!QqPreview || !track.IsQqMusic) return Around(track.Position(now).TotalSeconds + (track.IsAppleMusic ? AppleLead : 0), before, after, hold);
         // A preview can start at zero or inside the song. QQ's actual current line and
         // full-song karaoke timestamp locate it without guessing from the clip metadata.
         string text = track.CurrentLyric ?? "";
@@ -45,13 +46,14 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
         return LyricWindow.Only(text);
     }
     private static string NormalizeLine(string text) => string.Concat(text.Where(char.IsLetterOrDigit)).ToUpperInvariant();
-    public LyricWindow Around(double seconds, int before, int after)
+    public LyricWindow Around(double seconds, int before, int after, LyricHold? hold = null)
     {
         before = Math.Max(0, before); after = Math.Max(0, after);
         if (Lines.Count == 0) return LyricWindow.Only(Instrumental ? "♪" : "");
         if (!Synced) return LyricWindow.Empty;
         int index = -1;
         for (int i = 0; i < Lines.Count && Lines[i].Seconds <= seconds; i++) index = i;
+        if (hold is not null) index = hold.Index(this, index, seconds);
         string[] Texts(int from, int count) => [.. Lines.Skip(from).Take(count).Select(line => line.Text)];
         if (index < 0) return new([], "♪", Texts(0, after));
         // LRC timestamps start a line; they do not specify how long it is sung.
@@ -95,6 +97,27 @@ public sealed record Lyrics(IReadOnlyList<LyricLine> Lines, bool Synced, string 
         var texts = lines.Select(text => text.Trim()).Where(text => text.Length > 0).ToArray();
         static bool Notice(string text) => text.Contains("纯音乐", StringComparison.Ordinal) && text.Contains("欣赏", StringComparison.Ordinal);
         return texts.Any(Notice) && texts.All(text => Notice(text) || Regex.IsMatch(text, @"\A[^:：]{1,16}[:：]"));
+    }
+}
+
+// The line on show does not go back for a small step back of the position. A player's new report often puts the position a
+// little behind the clock BrimDeck ran on from the last one (Apple Music's whole seconds, see MediaRouting.FromWholeSeconds); just
+// after a new line had started, the line before it came back for a moment and the new one followed again, and a lyric area that
+// follows the line's length (DeckSettings.MusicLyricAutoWidth) shrank back and grew again with them. A step back of StepBack
+// seconds or more before the line's start is a seek, and shows the earlier line. New lyrics (another instance) start afresh.
+public sealed class LyricHold
+{
+    public const double StepBack = 1.5;
+    private Lyrics? _lyrics;
+    private int _index = -1;
+
+    // index: the line the position falls in (-1 before the first); the line to show.
+    public int Index(Lyrics lyrics, int index, double seconds)
+    {
+        if (ReferenceEquals(lyrics, _lyrics) && index < _index && _index < lyrics.Lines.Count && seconds > lyrics.Lines[_index].Seconds - StepBack)
+            return _index;
+        _lyrics = lyrics; _index = index;
+        return index;
     }
 }
 

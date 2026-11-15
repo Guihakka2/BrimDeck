@@ -544,8 +544,14 @@ public partial class MainWindow : Window
         if (_expanded) return;
         // A surface that no longer lies within the window (wider, or moved along a screen edge) places the window again.
         // Arriving on a new edge, still cleared, the surface takes its size at once (MainWindow.Edge.cs).
-        if (Collapsed.Surface.X < _windowOffset || Collapsed.Surface.X + Collapsed.Surface.Width > _windowOffset + FrameWidth || Collapsed.Surface.Bottom + 24 > FrameHeight) ApplySettings(); else SetExpanded(false, _edgeArriving);
+        if (Collapsed.Surface.X < _windowOffset || Collapsed.Surface.X + Collapsed.Surface.Width > _windowOffset + FrameWidth || Collapsed.Surface.Bottom + 24 > FrameHeight) { ApplySettings(); return; }
+        _contentResize = true;
+        try { SetExpanded(false, _edgeArriving); } finally { _contentResize = false; }
     }
+    // SetExpanded runs for FitCompactToContent: the surface at rest takes the width its content asks for (ContentResize).
+    private bool _contentResize;
+    // When the last such move ends (Environment.TickCount64), so that a new one while it is under way carries it on.
+    private long _contentResizeEnds;
     // The limits the settings window offers for a collapsed style on this window's monitor, whatever values are saved.
     // OffsetMax is the largest offset either way (OffsetMin = -OffsetMax) for a surface of the given width. TopMin and TopMax
     // are distances from the top of the work area for a capsule of the given height or a line of the given thickness; 0 and 0
@@ -909,11 +915,18 @@ public partial class MainWindow : Window
         if (booting) duration = (int)(duration * BootSwell);
         if (morphing) duration = (int)(duration * 1.3);
         if (turning || carried > 0) _turn.Started(now, duration, expanded, width, height);
+        // The surface at rest taking the width its content asks for (a lyric line of another length with MusicLyricAutoWidth):
+        // a change in place, not a closing, so it eases in and out from the first frame over the whole move. On the closing's
+        // drawer curve, after its delay, it covered most of the way in the first frames and read as a jump. A new width while the
+        // last such move is under way carries it on from where it is, without slowing to a stop first.
+        bool resizing = _contentResize && !turning && !expanded && carried == 0 && !morphing && !booting && duration > 0;
+        bool resizeUnderWay = resizing && now < _contentResizeEnds;
+        if (resizing) _contentResizeEnds = now + duration;
         Island.SettledClip = false;
         if (!expanded) SettleClip(duration);
         // The opening spring is most of the way there within a fifth of the move, so the content follows soon after it.
         Track content = expanded ? new(.12, .8) : new(0, .30);
-        Track surface = reshaping || morphing || booting || expanded ? new(0, 1) : new(PanelMotion.CloseSurfaceStart(redirect || carried > 0), line ? .92 : 1);
+        Track surface = reshaping || morphing || booting || expanded || resizing ? new(0, 1) : new(PanelMotion.CloseSurfaceStart(redirect || carried > 0), line ? .92 : 1);
         // Between forms the corners turn early: a notch becoming a capsule rounds its flat top long before it has its new size,
         // rather than showing a square top over round bottom corners for most of the move. The outline draws no top corners
         // while it has shoulders (IslandBorder), so the two take turns: leaving the notch, the shoulders draw in first and the
@@ -940,7 +953,8 @@ public partial class MainWindow : Window
         // dot has already finished its jumps (the notch sits at the top edge, so the same overshoot is barely seen).
         // A move the keyboard asked for lands without the give (motion-review C4).
         bool bounce = !booting && expanded && !reshaping && !keyboard && duration > 0 && HasRoomToBounce(width, height, left, gap);
-        IEasingFunction easeOut = Soft.Out, easeInOut = Soft.InOut, corners = morphing ? Soft.Follow : reshaping ? Soft.InOut : expanded || booting ? Soft.Out : Soft.Drawer;
+        IEasingFunction easeOut = Soft.Out, easeInOut = Soft.InOut, corners = morphing ? Soft.Follow : reshaping ? Soft.InOut : expanded || booting ? Soft.Out
+            : resizing ? resizeUnderWay ? Soft.Out : Soft.InOut : Soft.Drawer;
         IEasingFunction settle = bounce ? Soft.Bounce : corners;
         Animate(ExpandedContent, OpacityProperty, expanded ? 1 : 0, duration, content, easeOut, () => { if (!_expanded) ExpandedContent.Visibility = Visibility.Hidden; });
         // The content only fades, in and out on the same track and curve (motion-review F13: what leaves eases out as what arrives
@@ -951,6 +965,8 @@ public partial class MainWindow : Window
         double dpi = VisualTreeHelper.GetDpi(Island).DpiScaleX, fromWidth = Island.Width;
         if (duration == 0) SetImmediate(Island, WidthProperty, width);
         else Island.BeginAnimation(WidthProperty, Timed(new SnappedWidthAnimation { To = width, Page = pageWidth, Scale = dpi, EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
+        // The row built for the new width travels there with the surface's ends rather than standing there from the start.
+        if (resizing && !line && !across) SlideCompactRow(width - fromWidth, duration, surface, settle);
         Animate(Island, HeightProperty, height, duration, surface, settle);
         Animate(Island, IslandBorder.ShoulderRadiusProperty, expanded ? 0 : shape.Shoulder, duration, shoulderTrack, corners);
         // Compact notch and capsule hover over their full bounding box from the screen edge; the open panel uses its own outline.
