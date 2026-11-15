@@ -38,9 +38,9 @@ public partial class SettingsWindow
                 else
                 {
                     SectionTitle(Loc.T("切换方式", "Switching"), help: () => Loc.T(
-                        "单击后面一张露出的侧条、前面一张的标题，或再次单击页面切换按钮上的当前页图标，都可以切换。以下三种方式可以另外开启。",
-                        "A click on the side strip of the card behind, on the title of the card in front or once more on the page's button switches cards. The three ways below can be turned on as well."));
-                    Group(Toggle(Loc.T("指针停在侧条上时切换", "Switch when the pointer rests on the side strip"), S.ShelfHoverSwitch, value => Change(s => s.ShelfHoverSwitch = value)),
+                        "单击侧条、卡片标题或当前页图标也能切换。",
+                        "A click on the side strip, the card's title or the current page's icon switches as well."));
+                    Group(Toggle(Loc.T("指针悬停在侧条时切换", "Switch when the pointer hovers over the side strip"), S.ShelfHoverSwitch, value => Change(s => s.ShelfHoverSwitch = value)),
                         Toggle(Loc.T("按下鼠标中键切换", "Switch with a middle click"), S.ShelfMiddleSwitch, value => Change(s => s.ShelfMiddleSwitch = value)),
                         Toggle(Loc.T("触控板双指横滑或 Shift + 滚轮切换", "Switch with a two-finger sideways swipe or Shift + wheel"), S.ShelfSwipeSwitch, value => Change(s => s.ShelfSwipeSwitch = value)));
                 }
@@ -140,7 +140,7 @@ public partial class SettingsWindow
             else if (Math.Abs(share - S.ShelfFileShare) >= .05) Resize(s => s.ShelfFileShare = share, DeckPage.Clipboard);
         };
         return Row(Loc.T("两栏宽度", "Column widths"), line, help: () => Loc.T(
-            "在面板上拖动剪贴板与文件中转之间的分隔线，也能调整两栏宽度。双击分隔线，两栏宽度恢复为剪贴板 60%、文件中转 40%。",
-            "Dragging the divider between the clipboard and the file transfer on the panel sets the widths as well. A double-click on the divider gives back 60% for the clipboard and 40% for the file transfer."));
+            "在面板上拖动分隔线也能调整。双击分隔线，恢复为剪贴板 60%、文件中转 40%。",
+            "Dragging the divider on the panel works as well. A double-click on it gives back 60% for the clipboard and 40% for the file transfer."));
     }
 }
