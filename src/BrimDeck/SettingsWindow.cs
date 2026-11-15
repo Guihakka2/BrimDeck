@@ -689,10 +689,11 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
     private void Interaction()
     {
         SectionTitle(Loc.T("悬停与动画", "Hover and animation"));
-        // motion-review F20: the length covers the panel's expanding and collapsing; hover and press feedback keep their own pace.
-        var duration = SliderRow(Loc.T("展开与收起动画时长", "Expand and collapse duration"), S.AnimationDuration, 100, 1000, 20, Loc.T("毫秒", "ms"), value => Change(s => s.AnimationDuration = (int)value),
-            Loc.T("面板展开和收起的动画时长。时间越短，动画越快；收起比展开略快。悬停、按压等反馈有各自固定的节奏，不受此项影响。",
-                "How long the panel takes to expand and collapse. The shorter the time, the faster the animation; collapsing is a little quicker than expanding. Hover and press feedback keep their own pace and are not affected."));
+        // motion-review F20: the length covers the panel's changes of shape: expanding and collapsing, and the collapsed surface's
+        // width, style and edge, the swell on start and the shrink on exit. Page switches, hover and press feedback keep their own pace.
+        var duration = SliderRow(Loc.T("动画时长", "Animation duration"), S.AnimationDuration, 100, 1000, 20, Loc.T("毫秒", "ms"), value => Change(s => s.AnimationDuration = (int)value),
+            Loc.T("展开、收起以及收起时外形变化的时长。",
+                "How long expanding, collapsing and changes of the collapsed shape take."));
         var openDelay = SliderRow(Loc.T("展开延迟", "Expand delay"), S.OpenDelay, 0, 2000, 50, Loc.T("毫秒", "ms"), value => Change(s => s.OpenDelay = (int)value),
             Loc.T("鼠标悬停在 BrimDeck 的收起面板或指示条上多久后，开始展开。0 毫秒表示立即开始展开。",
                 "How long the pointer rests on BrimDeck's collapsed panel or indicator before it starts to expand. 0 ms expands immediately."));
