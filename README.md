@@ -105,6 +105,7 @@ Works with players that use Windows media controls, with extra support for NetEa
 - Lists the busiest apps by CPU or memory; click an app for its details.
 - Shows the space in use on internal drives, the whole machine's power draw, and the battery of a laptop or tablet.
 - Optionally shows CPU, GPU and solid-state drive temperatures, and the frame rate of the program in front.
+- Choose which readings the expanded page shows, and in what order, under Settings › System monitor; the page lays itself out for any choice, and what is not chosen is not read.
 - Colors follow the panel theme by default; several preset color schemes are offered, and you can make your own.
 
 For where each reading comes from and its limits, see [System monitor readings](docs/en-US/system-monitor.md). PCs whose CPU temperature or power cannot be read can turn on [enhanced sensors](docs/en-US/enhanced-sensors.md).
@@ -127,7 +128,7 @@ For the supported connections, brands and models, see [Supported devices](docs/e
 <img src="docs/en-US/images/clipboard.png" width="100%" alt="Clipboard and file transfer page: copied text, a link, code, a picture and a color on the left; held files with their sizes on the right">
 
 - **Clipboard**: Keeps the text and pictures you copy; click an entry to paste it into the window you are working in. Links, code and color values each show in their own style.
-- The history is stored encrypted on this PC and cleared when BrimDeck exits; what is in Favorites or in a category set to be kept stays. You can choose apps that are not recorded.
+- The history is stored only on this PC and cleared when BrimDeck exits by default, or kept for 1 day, 7 days or 30 days; what is in Favorites or in a category set to be kept stays. You can choose apps that are not recorded.
 - **File transfer**: Drag files onto the notch, the capsule or the panel to hold them, then click to paste them into the current window or drag them to where you need them. Only each file's location is kept, never a copy.
 - Both columns have categories with rules for what goes in by itself, and can be searched together.
 
@@ -143,7 +144,7 @@ For how to use it and its settings, see [Clipboard and file transfer](docs/en-US
 
 ### More settings
 
-- **Shortcuts**: Global shortcuts can expand or hide the panel, open a given page, switch the collapsed style, and move or resize the panel (Settings › Shortcuts).
+- **Shortcuts**: Global shortcuts can expand or hide the panel, open a given page, switch the collapsed style, and move or resize the panel (Settings › Shortcuts). A panel a shortcut opens takes the keyboard: Tab and the arrow keys move between its controls, Enter and Space press them, and Esc or the shortcut again closes it and hands the keyboard back to the window you were in.
 - **Expand on**: Hover or click (Settings › General › Hover and animation).
 - **Mouse pass-through**: Hovering no longer opens the panel and clicks go through it to the window beneath; only shortcuts open it. This suits gaming (Settings › General › Compatibility).
 - **Scale**: The panel can be drawn at 100% or 150% for high-resolution displays.
@@ -181,7 +182,7 @@ To remove settings and data as well, also delete `%LOCALAPPDATA%\BrimDeck`. If y
 
 - Reads only the sign-in state and usage records that apps already keep, and never changes, renews or ends their sign-ins.
 - Sign-in tokens are used only in memory and never written to disk; API keys you enter are stored on this PC, encrypted by Windows.
-- The clipboard history and the file transfer's list are stored only on this PC, encrypted by Windows, and never uploaded.
+- The clipboard history and the file transfer's list are stored only on this PC and never uploaded.
 - Goes online only to read quotas and usage, update model prices, fetch lyrics and covers, and check for updates. Conversations are never uploaded, and no usage data is collected.
 
 For the files BrimDeck reads and the addresses it connects to, see [Data and privacy](docs/en-US/privacy.md).
@@ -199,6 +200,9 @@ On many PCs Windows does not provide either. Turn on enhanced sensors under Sett
 
 **My mouse, keyboard or headset shows no battery. Why?**
 The device has to be connected and be one of the connections or models listed in [Supported devices](docs/en-US/devices.md). For a device that is not listed, you are welcome to report its model in [Issues](https://github.com/MoFeng2223/BrimDeck/issues).
+
+**Animations or the equalizer bars never move. Why?**
+BrimDeck's animations and equalizer bars need two settings turned on: BrimDeck's Settings › General › Hover and animation › Animate expanding and collapsing, and Windows Settings › Accessibility › Visual effects › Animation effects. If either is off, the expand animation, the equalizer bars and scrolling text all stop.
 
 ## Community
 
