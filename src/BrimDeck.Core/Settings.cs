@@ -622,6 +622,8 @@ public sealed class DeckSettings
     public bool ClipboardKeepHistory { get; set; }
     public HistoryLength ClipboardKeepFor { get; set; } = HistoryLength.Month;
     public TransferDragOut TransferDragOut { get; set; } = TransferDragOut.Copy;
+    public TransferDragOut TransferRightDragOut { get; set; } = TransferDragOut.Move;
+    public bool TransferRemoveAfterCopyDrop { get; set; }
     // Which columns the page shows: both, or only the clipboard or only the file transfer over the whole width. Only with both are
     // they arranged (ShelfArrangement): side by side or stacked as cards (ShelfLayout), and side by side the file transfer's share
     // of the width in percent, set by dragging the divider between them or in the settings.
@@ -903,6 +905,7 @@ public sealed class DeckSettings
         ClipboardWidth = double.IsFinite(ClipboardWidth) ? Math.Clamp(ClipboardWidth, DeckPages.MinWidth, DeckPages.MaxWidth) : ShelfSizes.Default.Width;
         ClipboardHeight = double.IsFinite(ClipboardHeight) ? Math.Clamp(ClipboardHeight, DeckPages.MinHeight, DeckPages.MaxHeight) : ShelfSizes.Default.Height;
         if (!Enum.IsDefined(TransferDragOut)) TransferDragOut = TransferDragOut.Copy;
+        if (!Enum.IsDefined(TransferRightDragOut)) TransferRightDragOut = TransferDragOut.Move;
         if (!Enum.IsDefined(ShelfShown)) ShelfShown = ShelfShown.Both;
         if (!Enum.IsDefined(ShelfArrangement)) ShelfArrangement = ShelfArrangement.Split;
         if (!Enum.IsDefined(ShelfClipView)) ShelfClipView = ClipView.Single;
