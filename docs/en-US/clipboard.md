@@ -6,6 +6,13 @@ Under Settings › Page layout › Show the page can show only the clipboard or 
 
 Drag the divider between the columns to change their widths; double-click it to go back to 60% for the clipboard and 40% for the file transfer. Under Settings › Page layout the columns can also be stacked as two cards, the one behind showing only a side strip with its icon, name and number of entries. Click that strip, the title of the card in front, or the page's button once more to switch cards. Three more ways of switching can be turned on under Settings › Page layout: hovering the pointer over the strip, a middle click (on by default), and a two-finger sideways swipe or Shift + wheel.
 
+Each column can show its entries in several ways, chosen for each under Settings › Page layout and combined freely. By default the clipboard shows one line an entry and the file transfer two:
+
+- Clipboard: one line; three lines (each entry three lines high, with up to three lines of its text at the left and, at the right, when it was copied, its characters or a picture's size, and the application it came from); blocks (in as many columns as the width holds, a picture filling its block).
+- File transfer: one line; two lines (a large icon at the left, the size and the date changed under the name); grid (large icons over the names, in as many columns as the width holds); row (a single row, scrolled sideways with the wheel); column (a single column, suited to a narrow file transfer).
+
+In the grid, the row, the column and on two lines, picture files show a thumbnail. With the pointer on a file, four buttons appear: open, show in folder, remove, and details.
+
 ## Clipboard
 
 BrimDeck keeps the text and pictures you copy, newest first.

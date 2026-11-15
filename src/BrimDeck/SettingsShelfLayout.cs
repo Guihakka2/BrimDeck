@@ -13,7 +13,8 @@ namespace BrimDeck;
 // there is nothing to arrange, so the arrangement and its settings are hidden. Under the cards stand the settings of the arrangement
 // chosen, and only those, as on the collapsed view's page: side by side, how the width is shared between the columns, which
 // dragging the divider on the panel also sets; stacked, the further ways of bringing the other card forward
-// (MainWindow.ShelfArrange.cs).
+// (MainWindow.ShelfArrange.cs). Below them, for each column the page shows, the way that column shows its entries (ClipView,
+// FileView), chosen on cards as well (ShelfViewPreview).
 public partial class SettingsWindow
 {
     internal const int ShelfLayoutSettingsPage = 17;
@@ -23,17 +24,53 @@ public partial class SettingsWindow
 
     private void ShelfLayoutSettings()
     {
-        FrameworkElement? arranging = null;
+        FrameworkElement? arranging = null, clips = null, files = null;
+        // The arrangement shows with both columns; each column's own cards show while the page shows that column.
+        void Show(ShelfShown shown)
+        {
+            if (arranging is null || clips is null || files is null) return;
+            arranging.Visibility = shown == ShelfShown.Both ? Visibility.Visible : Visibility.Collapsed;
+            clips.Visibility = shown != ShelfShown.Files ? Visibility.Visible : Visibility.Collapsed;
+            files.Visibility = shown != ShelfShown.Clipboard ? Visibility.Visible : Visibility.Collapsed;
+        }
         Group(MusicChoice(Loc.T("显示内容", "Show"), S.ShelfShown,
             [(ShelfShown.Clipboard, Loc.T("剪贴板", "Clipboard")), (ShelfShown.Files, Loc.T("文件中转", "File transfer")), (ShelfShown.Both, Loc.T("都显示", "Both"))],
-            value =>
-            {
-                Change(s => s.ShelfShown = value);
-                if (arranging is not null) arranging.Visibility = value == ShelfShown.Both ? Visibility.Visible : Visibility.Collapsed;
-            }));
+            value => { Change(s => s.ShelfShown = value); Show(value); }));
         arranging = Collect(Arrangement);
-        arranging.Visibility = S.ShelfShown == ShelfShown.Both ? Visibility.Visible : Visibility.Collapsed;
-        Target.Children.Add(arranging);
+        clips = Collect(() => ViewCards(Loc.T("剪贴板的显示方式", "How the clipboard shows entries"), "ShelfClipView",
+            [(ClipView.Single, Loc.T("单行", "One line")), (ClipView.Three, Loc.T("三行", "Three lines")), (ClipView.Blocks, Loc.T("方块", "Blocks"))],
+            S.ShelfClipView, value => { if (S.ShelfClipView != value) Change(s => s.ShelfClipView = value); }, value => ShelfViewPreview.Create(value, _palette)));
+        files = Collect(() => ViewCards(Loc.T("文件中转的显示方式", "How the file transfer shows files"), "ShelfFileView",
+            [(FileView.Single, Loc.T("单行", "One line")), (FileView.Two, Loc.T("双行", "Two lines")), (FileView.Grid, Loc.T("网格", "Grid")),
+                (FileView.Row, Loc.T("横排", "Row")), (FileView.Column, Loc.T("竖排", "Column"))],
+            S.ShelfFileView, value =>
+            {
+                if (S.ShelfFileView != value) Change(s => s.ShelfFileView = value);
+                // The widths' slider reaches as far as the way chosen lets the file transfer narrow.
+                if (_shareSlider is { } slider) slider.Maximum = 100 - ShelfLayout.LeastShare(value);
+            }, value => ShelfViewPreview.Create(value, _palette)));
+        Target.Children.Add(arranging); Target.Children.Add(clips); Target.Children.Add(files);
+        Show(S.ShelfShown);
+    }
+
+    // A row of cards that choose one way of showing a column, each with its diagram and its name under it; the cards share the
+    // row's width. Choosing does not open the panel.
+    private void ViewCards<T>(string title, string group, IReadOnlyList<(T Value, string Name)> choices, T current, Action<T> choose, Func<T, FrameworkElement> preview) where T : struct, Enum
+    {
+        SectionTitle(title);
+        var cards = new UniformGrid { Columns = choices.Count, Margin = new Thickness(-6, 0, -6, 12) };
+        foreach (var (value, name) in choices)
+        {
+            var card = new RadioButton
+            {
+                Style = (Style)FindResource("SettingsChoice"), Content = preview(value), Margin = new Thickness(6, 3, 6, 0), Tag = name, GroupName = group,
+                IsChecked = EqualityComparer<T>.Default.Equals(current, value)
+            };
+            AutomationProperties.SetName(card, name);
+            card.Checked += (_, _) => choose(value);
+            cards.Children.Add(card);
+        }
+        Target.Children.Add(cards);
     }
 
     private void Arrangement()
@@ -95,15 +132,16 @@ public partial class SettingsWindow
     {
         if (!IsLoaded || _page != ShelfLayoutSettingsPage || _shareSlider is not { IsLoaded: true } slider) return;
         _shareFollowing = true;
-        try { slider.Value = Math.Clamp(100 - ShelfLayout.ClampShare(S.ShelfFileShare), slider.Minimum, slider.Maximum); }
+        try { slider.Value = Math.Clamp(100 - ShelfLayout.ClampShare(S.ShelfFileShare, S.ShelfFileView), slider.Minimum, slider.Maximum); }
         finally { _shareFollowing = false; }
     }
     private FrameworkElement ColumnWidths()
     {
-        double least = 100 - ShelfLayout.MaxShare, most = 100 - ShelfLayout.MinShare;
+        // In one column the file transfer may be a narrow strip (ShelfLayout.LeastShare), so the clipboard may take more.
+        double least = 100 - ShelfLayout.MaxShare, most = 100 - ShelfLayout.LeastShare(S.ShelfFileView);
         var slider = new Slider
         {
-            Style = (Style)FindResource("SettingsSlider"), Minimum = least, Maximum = most, Value = Math.Clamp(100 - ShelfLayout.ClampShare(S.ShelfFileShare), least, most),
+            Style = (Style)FindResource("SettingsSlider"), Minimum = least, Maximum = most, Value = Math.Clamp(100 - ShelfLayout.ClampShare(S.ShelfFileShare, S.ShelfFileView), least, most),
             SmallChange = 1, LargeChange = 5, IsMoveToPointEnabled = true, Width = 190,
             Margin = new Thickness(12, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center
         };

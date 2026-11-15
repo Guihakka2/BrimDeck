@@ -36,7 +36,7 @@ public partial class MainWindow
     private (Border Grip, Action<bool> Show)? _divider;
 
     private ShelfLayout ShelfLayoutFor(double width, double height) =>
-        ShelfLayout.For(width, height, _shareDrag ?? Settings.ShelfFileShare, Settings.ShelfStacked(), Settings.ShelfShown);
+        ShelfLayout.For(width, height, _shareDrag ?? Settings.ShelfFileShare, Settings.ShelfStacked(), Settings.ShelfShown, Settings.ShelfClipView, Settings.ShelfFileView);
 
     private ShelfSide ShelfFront => _shelfEdit is not null ? ShelfSide.Clipboard : _dropping ? ShelfSide.Files : _shelfFront;
 
@@ -106,7 +106,8 @@ public partial class MainWindow
             if (ShelfContent.Children.Count != 1 || ShelfContent.Children[0] is not Grid { ColumnDefinitions.Count: 3 } grid) return;
             double gap = grid.ColumnDefinitions[1].ActualWidth, inner = grid.ActualWidth - gap;
             double middle = e.GetPosition(grid).X - _shareGrab;
-            double files = ShelfLayout.FileWidth(inner, ShelfLayout.ClampShare((grid.ActualWidth - middle - gap / 2) / Math.Max(1, inner) * 100));
+            var view = Settings.ShelfFileView;
+            double files = ShelfLayout.FileWidth(inner, ShelfLayout.ClampShare((grid.ActualWidth - middle - gap / 2) / Math.Max(1, inner) * 100, view), view);
             double share = Math.Round(files / Math.Max(1, inner) * 100, 1);
             if (Math.Abs(share - _shareDrag.Value) < .05) return;
             _shareDrag = share;
@@ -157,14 +158,14 @@ public partial class MainWindow
     // saved; null when the drag has ended (the settings save the share themselves).
     internal void PreviewShelfShare(double? share)
     {
-        _shareDrag = share is { } value && Settings.ShelfShown == ShelfShown.Both && Settings.ShelfArrangement == ShelfArrangement.Split ? ShelfLayout.ClampShare(Math.Round(value, 1)) : null;
+        _shareDrag = share is { } value && Settings.ShelfShown == ShelfShown.Both && Settings.ShelfArrangement == ShelfArrangement.Split ? ShelfLayout.ClampShare(Math.Round(value, 1), Settings.ShelfFileView) : null;
         if (IsShelfPage && (_expanded || _preview)) StretchShelf();
     }
     // The double-click: the default share, at once.
     private void ResetShare() { _shareDrag = null; SaveShare(ShelfLayout.DefaultShare); }
     private void SaveShare(double share)
     {
-        share = ShelfLayout.ClampShare(Math.Round(share, 1));
+        share = ShelfLayout.ClampShare(Math.Round(share, 1), Settings.ShelfFileView);
         if (Math.Abs(share - Settings.ShelfFileShare) < .05) { RenderShelf(); return; }
         _app.UpdateSettingsFor(Profile, SettingsWith(s => s.ShelfFileShare = share));
         _app.ShelfShareChanged();

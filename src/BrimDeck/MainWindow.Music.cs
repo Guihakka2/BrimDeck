@@ -137,7 +137,7 @@ public partial class MainWindow
             // Start before resizing: the shrinking surface can immediately fire MouseLeave.
             _hover.Stop(); _leave.Stop(); _pageSwitchHold.Stop(); _pageSwitchHold.Start();
         }
-        if (remember) { Settings.LastPage = page; _app.PanelSettingsEdited(this); }
+        if (remember) { Settings.LastPage = page; _app.PanelSettingsEdited(this); _app.PageChosen(this, page); }
         bool animate = changed && _expanded && !_preview && Animates;
         var before = CurrentPage;
         var from = PageContent(before);
@@ -147,6 +147,8 @@ public partial class MainWindow
         bool back = Settings.PageOrder.IndexOf(page) < Settings.PageOrder.IndexOf(before);
         _handover.Send(picture, place, PageContent(page), back ? Handover.Back : Handover.Forward);
     }
+    // The page chosen on another display's panel (App.PageChosen).
+    internal void FollowPage(DeckPage page) { if (CurrentPage != page) SelectPage(page, remember: false); }
     private FrameworkElement PageContent(DeckPage page) => page switch { DeckPage.Music => MusicContent, DeckPage.Monitor => MonitorContent, DeckPage.Clipboard => ShelfContent, DeckPage.Devices => DevicesContent, _ => UsageContent };
     private void ShowPage(DeckPage page, bool animatePage)
     {

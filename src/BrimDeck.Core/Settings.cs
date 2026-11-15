@@ -632,6 +632,10 @@ public sealed class DeckSettings
     public bool ShelfHoverSwitch { get; set; }
     public bool ShelfMiddleSwitch { get; set; } = true;
     public bool ShelfSwipeSwitch { get; set; }
+    // How each column shows its entries (ClipView, FileView), chosen for each by itself. At first the clipboard shows one line an
+    // entry, and the file transfer two, under a larger icon.
+    public ClipView ShelfClipView { get; set; } = ClipView.Single;
+    public FileView ShelfFileView { get; set; } = FileView.Two;
     public double MonitorHeight { get; set; } = MonitorSizes.Default.Height;
     public MonitorPalette MonitorPalette { get; set; } = MonitorPalette.Theme;
     // The Custom scheme's colors; kept while another scheme is chosen.
@@ -898,7 +902,9 @@ public sealed class DeckSettings
         if (!Enum.IsDefined(TransferDragOut)) TransferDragOut = TransferDragOut.Copy;
         if (!Enum.IsDefined(ShelfShown)) ShelfShown = ShelfShown.Both;
         if (!Enum.IsDefined(ShelfArrangement)) ShelfArrangement = ShelfArrangement.Split;
-        ShelfFileShare = ShelfLayout.ClampShare(Math.Round(ShelfFileShare, 1));
+        if (!Enum.IsDefined(ShelfClipView)) ShelfClipView = ClipView.Single;
+        if (!Enum.IsDefined(ShelfFileView)) ShelfFileView = FileView.Two;
+        ShelfFileShare = ShelfLayout.ClampShare(Math.Round(ShelfFileShare, 1), ShelfFileView);
         if (!Enum.IsDefined(ClipboardKeepFor)) ClipboardKeepFor = HistoryLength.Month;
         ClipboardExcluded = ClipboardExclusions.Normalize(ClipboardExcluded);
         PanelScale = PanelScales.Fit(PanelScale);
