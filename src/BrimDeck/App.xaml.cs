@@ -522,7 +522,7 @@ public partial class App : Application
         bool Heat(CompactMonitorItems item, CompactMonitorItems among) => (among & item) != 0 && rows.Any(settings => settings.CompactReadings.FirstOrDefault(reading => reading.Item == item) is { } reading
             && (item == CompactMonitorItems.Storage || reading.ShowValue) && CompactFigures.Shows(reading, CompactFigures.Temperature));
         bool stripDrives = (shown & CompactMonitorItems.Storage) != 0;
-        if (Monitor is not null) Monitor.GpuUsage = Settings.MonitorGpuUsage;
+        if (Monitor is not null) { Monitor.GpuUsage = Settings.MonitorGpuUsage; Monitor.TrafficPeriod = Settings.MonitorTrafficPeriod; }
         var pageDemand = PageDemand();
         bool Page(ExpandedDemand what) => page && (pageDemand & what) != 0;
         // The cpu, memory and network are read for what an open page shows and for a collapsed row; with a row, all as before.

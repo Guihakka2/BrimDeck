@@ -57,23 +57,14 @@ public static class CompactFigures
     };
 }
 
-// What the collapsed row's download and upload show (CompactReading.Figures of those readings): their rate, or without a choice, or the
-// bytes moved since the app began reading the network (Total). One of the two. The page's network block shows both.
+// The traffic over the period chosen (TrafficPeriods) the collapsed row's DownloadTotal and UploadTotal show, from Windows' record.
 public static class CompactTraffic
 {
-    public const string Total = "Total";
-    public static bool Has(CompactMonitorItems item) => item is CompactMonitorItems.Download or CompactMonitorItems.Upload;
-    public static bool Shows(CompactReading reading) => Has(reading.Item) && reading.Figures?.Contains(Total) == true;
-
-    // The total or the default (null); anything else is dropped, and a reading that has none keeps none.
-    public static List<string>? Normalize(CompactMonitorItems item, IEnumerable<string?>? figures) =>
-        Has(item) && figures?.Any(chosen => string.Equals(chosen?.Trim(), Total, StringComparison.OrdinalIgnoreCase)) == true ? [Total] : null;
-
-    // The bytes moved in this direction in this snapshot; null while the network has no reading, or none yet.
+    // The traffic in this snapshot; null while the network has no reading, or Windows' record has not been read for the period yet.
     public static double? Of(CompactMonitorItems item, MonitorSnapshot? snapshot) => item switch
     {
-        CompactMonitorItems.Download => snapshot?.Network.OrDefault?.DownTotalBytes,
-        CompactMonitorItems.Upload => snapshot?.Network.OrDefault?.UpTotalBytes,
+        CompactMonitorItems.DownloadTotal => snapshot?.Network.OrDefault?.DownTotalBytes,
+        CompactMonitorItems.UploadTotal => snapshot?.Network.OrDefault?.UpTotalBytes,
         _ => null
     };
 }

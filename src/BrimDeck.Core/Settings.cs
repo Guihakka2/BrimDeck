@@ -646,6 +646,8 @@ public sealed class DeckSettings
     public CoreDisplay CoreDisplay { get; set; } = CoreDisplay.Auto;
     // Seconds between readings: 1 or 2.
     public int MonitorInterval { get; set; } = 1;
+    // The span the traffic shown beside the network's rates is summed over, from Windows' own record (TrafficPeriods).
+    public TrafficPeriod MonitorTrafficPeriod { get; set; } = TrafficPeriod.Today;
     public bool MonitorProcesses { get; set; } = true;
     public ProcessSort MonitorSort { get; set; }
     public MonitorMain MonitorMain { get; set; }
@@ -907,6 +909,7 @@ public sealed class DeckSettings
         CompactWarningColor = AppPresets.NormalizeColor(CompactWarningColor) is { Length: > 0 } warning ? warning : null;
         CompactCriticalColor = AppPresets.NormalizeColor(CompactCriticalColor) is { Length: > 0 } critical ? critical : null;
         MonitorInterval = Math.Clamp(MonitorInterval, 1, 2);
+        if (!Enum.IsDefined(MonitorTrafficPeriod)) MonitorTrafficPeriod = TrafficPeriod.Today;
         if (!Enum.IsDefined(MonitorSort)) MonitorSort = ProcessSort.Cpu;
         if (!Enum.IsDefined(MonitorMain)) MonitorMain = MonitorMain.Cpu;
         if (!Enum.IsDefined(MonitorGpuUsage)) MonitorGpuUsage = GpuUsageSource.Driver;

@@ -709,7 +709,8 @@ internal sealed class NetworkBlock : FrameworkElement
     public void Set(Reading<NetworkSample> reading, IReadOnlyList<double> down, IReadOnlyList<double> up)
     {
         _rates = reading.OrDefault; _reason = reading.HasValue ? "" : reading.Reason; _down = down; _up = up;
-        static string Total(double? bytes) => bytes is { } moved ? Loc.T("，累计 ", ", total ") + MonitorFormat.Total(moved).Text : "";
+        // The traffic over the period chosen after each rate: "下载 1.2 MB/s，当天 2.31 GB".
+        string Total(double? bytes) => bytes is { } moved ? Loc.T("，", ", ") + TrafficPeriods.Name(_rates!.TotalPeriod) + " " + MonitorFormat.Total(moved).Text : "";
         string? downText = _rates is { } d && _download ? Loc.T("下载 ", "Download ") + MonitorFormat.Rate(d.DownBytesPerSecond).Text + Total(d.DownTotalBytes) : null;
         string? upText = _rates is { } u && _upload ? Loc.T("上传 ", "Upload ") + MonitorFormat.Rate(u.UpBytesPerSecond).Text + Total(u.UpTotalBytes) : null;
         ToolTip = _rates is not null ? string.Join(" · ", (_uploadFirst ? new[] { upText, downText } : [downText, upText]).OfType<string>())
@@ -733,7 +734,7 @@ internal sealed class NetworkBlock : FrameworkElement
         else Half(drawing, 0, w, line, MonitorGlyph.Up, _rates?.UpBytesPerSecond, _rates?.UpTotalBytes, _up, _colors.Upload, ppd);
     }
 
-    // total: the bytes moved since the app began reading, at the end of the half in the caption's type where there is room for it (with
+    // total: the traffic over the period chosen (TrafficPeriods), at the end of the half in the caption's type where there is room for it (with
     // its label if that fits, else the figure alone), and the curve ends before it.
     private void Half(DrawingContext drawing, double left, double width, double line, MonitorGlyph glyph, double? rate, double? total, IReadOnlyList<double> history, string color, double ppd)
     {
@@ -751,7 +752,7 @@ internal sealed class NetworkBlock : FrameworkElement
         if (total is { } moved)
         {
             var figure = MonitorFormat.Total(moved).Text;
-            foreach (var label in new[] { Loc.T("累计 ", "Total ") + figure, figure })
+            foreach (var label in new[] { TrafficPeriods.Name(_rates?.TotalPeriod ?? TrafficPeriod.Today) + " " + figure, figure })
             {
                 var drawn = MonitorDraw.Text(label, _caption, Look.Tertiary, ppd);
                 double drawnWidth = Math.Ceiling(drawn.WidthIncludingTrailingWhitespace);
