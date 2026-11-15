@@ -25,12 +25,16 @@ public static class AtkHeadsets
         return r[2] is > 0 and <= 100 ? new(r[2], r[3] == 0x03) : null;
     }
 
-    private static bool Takes(HidShape s) => s.Vendor == Vendor && s.Product == N9V2Ultimate && HeadsetPages.Is(s, 0xFF90) && s.Usage == 0x0001
+    // The N9 V2 PRO's and N9 V2 ULTRA's dongles (12D4, 12D6), which ATK HUB (its "BOLUTEK" headsets) asks with the same frame
+    // as the Ultimate's; not measured by us.
+    public static readonly (int Product, string Name)[] Receivers = [(N9V2Ultimate, "ATK N9 V2 Ultimate"), (0x12D4, "ATK N9 V2 PRO"), (0x12D6, "ATK N9 V2 ULTRA")];
+
+    private static bool Takes(HidShape s) => s.Vendor == Vendor && Receivers.Any(d => d.Product == s.Product) && HeadsetPages.Is(s, 0xFF90) && s.Usage == 0x0001
         && s.InputLength >= 64 && s.OutputLength >= 64;
 
     public static IEnumerable<BrandFamily> Families =>
     [
         new("ATK Headset", Takes, _ => [new BrandWay("atk-headset.state", WayTransport.Output, Request(), StateBattery) { TimeoutMs = 1000 }])
-        { Kind = _ => DeviceKind.Headphones, Prefix = "atk-headset", DisplayName = _ => "ATK N9 V2 Ultimate" },
+        { Kind = _ => DeviceKind.Headphones, Prefix = "atk-headset", DisplayName = s => Receivers.First(d => d.Product == s.Product).Name },
     ];
 }

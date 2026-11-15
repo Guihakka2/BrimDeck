@@ -72,6 +72,7 @@ try
     BrandsMouseTests.Run(Check);
     BrandsGapTests.Run(Check);
     BrandsMoreTests.Run(Check);
+    OfficialDriverTests.Run(Check);
     PowerTests.Run(Check);
     DevicesPageTests.Run(Check);
     FrameRateTests.Run(Check);

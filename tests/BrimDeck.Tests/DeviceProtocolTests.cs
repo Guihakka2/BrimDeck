@@ -163,7 +163,7 @@ static class DeviceProtocolTests
             Dongles.MchoseReads(0x100B, "2.4G Receiver", 0xFF01, 1, 65, 65).SequenceEqual([Dongles.MchoseRead.Realtek, Dongles.MchoseRead.Frame4D, Dongles.MchoseRead.Audio, Dongles.MchoseRead.Status])
             && Dongles.MchoseReads(0x100B, "MCHOSE A7 V2 Ultra Mouse", 0xFF01, 1, 65, 65).SequenceEqual([Dongles.MchoseRead.Realtek, Dongles.MchoseRead.Frame4D, Dongles.MchoseRead.Status])
             && Dongles.MchoseReads(0x4245, "Mouse", 0xFF01, 0x10, 0, 65).SequenceEqual([Dongles.MchoseRead.Gmouse, Dongles.MchoseRead.Status])
-            && Dongles.MchoseReads(0x3033, "MCHOSE K99 V3 Keyboard", 0xFF70, 0x71, 0, 64).SequenceEqual([Dongles.MchoseRead.Status])
+            && Dongles.MchoseReads(0x4011, "MCHOSE K99 Keyboard", 0xFF70, 0x71, 0, 64).SequenceEqual([Dongles.MchoseRead.Status])
             && Dongles.MchoseReads(0x1015, "", 0xFF01, 1, 65, 65).SequenceEqual([Dongles.MchoseRead.Status])
             && Dongles.MchoseReads(0x6008, "V9 Turbo", 0xFF00, 1, 0, 64).SequenceEqual([Dongles.MchoseRead.Audio, Dongles.MchoseRead.Status])
             && Dongles.MchoseReads(0x6045, "X9", 0xFF90, 1, 0, 64).SequenceEqual([Dongles.MchoseRead.Audio, Dongles.MchoseRead.Status])
@@ -424,7 +424,7 @@ static class DeviceProtocolTests
         check("ATK keyboards: the Z87 Pro's dongle read with VGN's frame, its model name given over the dongle's",
             Dongles.VgnBattery(atk) == new BatteryRead(92) && Dongles.Find(0x373B, 0x1012, 0xFF1C, "ATK Z87 Dongle", 0, 1, 0x0092, 64, 64) == Dongles.Protocol.Vgn
             && Dongles.Find(0x373B, 0x1012, 0xFF1B, "ATK Z87 Dongle", 0, 1, 0x0092, 64, 64) is null
-            && Dongles.AtkKeyboard(0x1012) == "ATK Z87 Pro" && Dongles.AtkKeyboard(0x1013) is null);
+            && Dongles.AtkKeyboard(0x1012) == "ATK Z87 Pro" && Dongles.AtkKeyboard(0x1013) == "ATK Z87 Pro" && Dongles.AtkKeyboard(0x1014) is null);
         var endgame = new byte[32]; endgame[0] = 0xA1; endgame[1] = 0x01; endgame[16] = 77;
         check("Endgame Gear: the request and a reply; a busy one is none", Dongles.EndgameRequest(32)[..2].SequenceEqual(new byte[] { 0xA1, 0xB4 }) && Dongles.EndgameBattery(endgame) == new BatteryRead(77)
             && Dongles.EndgameBattery([0xA1, 0x03, .. new byte[30]]) is null);
