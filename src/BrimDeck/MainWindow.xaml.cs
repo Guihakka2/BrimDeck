@@ -987,8 +987,13 @@ public partial class MainWindow : Window
         // The island's width and left edge move on whole device pixels (SnappedAnimations.cs): rounded each on its own by the layout,
         // they stepped the page and the surface's edges a pixel to and fro in the tail of the move at display scales above 100 percent.
         double dpi = VisualTreeHelper.GetDpi(Island).DpiScaleX, fromWidth = Island.Width;
+        // What is centred in the island gives the moving width its parity (SurfaceSnap): the open page, or, for a surface at rest
+        // taking its content's width, the collapsed row built for the new width (ApplyCompactGeometry). On the page's parity a row
+        // of the other parity stood half a pixel off the middle all through the move and stepped a pixel on its last frame, to
+        // the left or the right as the rounding fell: a lyric line a character or two longer or shorter ended with a nudge.
+        double centred = resizing && !across && double.IsFinite(Compact.Width) && Compact.Width > 0 ? Compact.Width : pageWidth;
         if (duration == 0) SetImmediate(Island, WidthProperty, width);
-        else Island.BeginAnimation(WidthProperty, Timed(new SnappedWidthAnimation { To = width, Page = pageWidth, Scale = dpi, EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
+        else Island.BeginAnimation(WidthProperty, Timed(new SnappedWidthAnimation { To = width, Page = centred, Scale = dpi, EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
         // The row built for the new width travels there with the surface's ends rather than standing there from the start.
         if (resizing && !line && !across) SlideCompactRow(width - fromWidth, duration, surface, settle);
         Animate(Island, HeightProperty, height, duration, surface, settle);
@@ -1014,7 +1019,7 @@ public partial class MainWindow : Window
                 SetImmediate(HoverExtension, MarginProperty, from);
                 HoverExtension.BeginAnimation(MarginProperty, Timed(new ThicknessAnimation { From = from, To = new Thickness(box.Left - left, boxTop, 0, 0), EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
             }
-            HoverZone.BeginAnimation(MarginProperty, Timed(new SnappedLeftAnimation { To = left, FromWidth = fromWidth, ToWidth = width, Page = pageWidth, Scale = dpi, EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
+            HoverZone.BeginAnimation(MarginProperty, Timed(new SnappedLeftAnimation { To = left, FromWidth = fromWidth, ToWidth = width, Page = centred, Scale = dpi, EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
             Island.BeginAnimation(MarginProperty, Timed(new ThicknessAnimation { To = new Thickness(0, gap, 0, 0), EasingFunction = settle }, duration, surface), HandoffBehavior.SnapshotAndReplace);
             Island.BeginAnimation(Border.CornerRadiusProperty, Timed(new CornerRadiusAnimation { To = radius, EasingFunction = morphing ? Soft.Out : corners }, duration, cornerTrack), HandoffBehavior.SnapshotAndReplace);
         }

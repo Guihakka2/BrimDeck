@@ -264,10 +264,11 @@ internal static class MusicTests
             && CompactMusicLayout.NaturalWidth(1, true, 0, true, 0, 0, 0, true, CompactMusicLayout.DefaultBars, cover: false) == CompactMusicLayout.TextSlot + 18 + 8
             && CompactMusicLayout.RequiredWidth(1, true, true, 0, 0, 0, true, CompactMusicLayout.DefaultBars, cover: false) == 18 + 8 + 18);
         // The middle text that follows its length (DeckSettings.MusicLyricAutoWidth, MusicTitleAutoWidth): its room is the text's width
-        // within its limits, and the text never widens the surface past the screen share unless the fixed slot needs more.
-        check("Middle text that follows its length asks for its room, within the shortest and longest room",
+        // from the shortest room up, with no longest, and the text never widens the surface past the widest the screen allows unless
+        // the fixed slot needs more.
+        check("Middle text that follows its length asks for its room, from the shortest room up and however long",
             CompactMusicLayout.FollowSlot(100.2, 1) == 102 && CompactMusicLayout.FollowSlot(10, 1) == CompactMusicLayout.FollowSlotMin
-            && CompactMusicLayout.FollowSlot(5000, 1) == CompactMusicLayout.FollowSlotMax && CompactMusicLayout.FollowSlot(5000, 2) == 2 * CompactMusicLayout.FollowSlotMax
+            && CompactMusicLayout.FollowSlot(5000, 1) == 5001 && CompactMusicLayout.FollowSlot(5000, 2) == 5001 && CompactMusicLayout.FollowSlot(10, 2) == 2 * CompactMusicLayout.FollowSlotMin
             && CompactMusicLayout.FollowSlot(double.NaN, 1) == CompactMusicLayout.FollowSlotMin && CompactMusicLayout.FollowSlot(-3, 1) == CompactMusicLayout.FollowSlotMin
             && CompactMusicLayout.NaturalWidth(1, true, 0, true, 0, 0, 0, true, CompactMusicLayout.DefaultBars, textSlot: 102) == 20 + 8 + 102 + 8 + 18
             && CompactMusicLayout.NaturalWidth(1, true, 0, true, 0, 0, 0, true) == CompactMusicLayout.NaturalWidth(1, true, 0, true, 0, 0, 0, true, textSlot: 0));

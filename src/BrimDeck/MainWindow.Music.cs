@@ -1039,15 +1039,15 @@ public partial class MainWindow
     private double CompactTextWidth(string text, double size) => text.Length == 0 ? 0
         : new FormattedText(text, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, Fonts.Face(UiFontRole.Panel, FontWeights.Normal), size,
             Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip).Width;
-    // The most content the middle text may widen the surface to: FollowScreenShare of the widest the style may be on this monitor (the
-    // screen, or the work area for the capsule), less the surface's insets.
+    // The most content the middle text may widen the surface to: the widest the style may be on this monitor (the screen, or the
+    // work area for the capsule, as when its width is set by hand), less the surface's insets.
     private double FollowContentLimit(CollapsedShape shape)
     {
         var style = shape.Style;
         var (monitor, work) = style == CompactStyle.Capsule ? (_screenMonitor, _screenWork) : (MonitorBoundsDip, WorkDip);
         double span = CollapsedGeometry.WidthRange(style, monitor, work, _scale).Max;
         double insets = CollapsedGeometry.SurfaceWidth(style, shape.Surface.Height, 1, _scale) - 1;
-        return double.IsFinite(span) && span > 0 ? Math.Max(0, span * CompactMusicLayout.FollowScreenShare - Math.Max(0, insets)) : double.PositiveInfinity;
+        return double.IsFinite(span) && span > 0 ? Math.Max(0, span - Math.Max(0, insets)) : double.PositiveInfinity;
     }
     // The collapsed lyric: the line, or the title without one, and for an instrumental when chosen (DeckSettings.MusicInstrumentalTitle).
     private string CompactLyricText(MediaTrack track, string line)
@@ -1241,8 +1241,12 @@ public partial class MainWindow
     // The surface moves to a new width for its middle text's length (SetExpanded, a content resize). The row is built at once for the
     // new width and centred in the surface, so the cover and the parts at the ends stood at their new places from the first frame and
     // the moving edges only uncovered or covered them. Instead each part starts where it was and travels with its end of the surface:
-    // the parts before the text and the text itself with the left end, the parts after it with the right end, on the surface's own
-    // curve; the text's room opens with them, so a longer line never runs under the parts after it. delta: the surface's change of width.
+    // the parts before the text with the left end, the parts after it with the right end, on the surface's own curve. The text
+    // itself does not travel: the two ends move by the same amount, so the middle of its room stays where it is, and the text,
+    // centred in its room, is in the middle of the room all through the move. (It used to travel with the left end: a shorter
+    // line stood at the left of the old room, the gap all on its right, and the surface seemed to draw in from the right alone.)
+    // A longer line shows as much as the room holds, from its middle outwards, so it never runs under the parts beside it.
+    // delta: the surface's change of width.
     private void SlideCompactRow(double delta, int duration, Track track, IEasingFunction easing)
     {
         if (duration <= 0 || !double.IsFinite(delta) || Math.Abs(delta) < .5 || _compactMarquee is not { } title
@@ -1252,14 +1256,16 @@ public partial class MainWindow
         double half = delta / 2;
         for (int i = 0; i < grid.Children.Count; i++)
         {
+            if (i == at) continue;
             var part = grid.Children[i];
-            var shift = new TranslateTransform(i <= at ? half : -half, 0);
+            var shift = new TranslateTransform(i < at ? half : -half, 0);
             var own = part.RenderTransform;
             part.RenderTransform = own is null || own.Value.IsIdentity ? shift : new TransformGroup { Children = { own, shift } };
             shift.BeginAnimation(TranslateTransform.XProperty, Timed(new DoubleAnimation { To = 0, EasingFunction = easing }, duration, track));
         }
         if (delta <= 0 || !double.IsFinite(title.Width) || !double.IsFinite(title.Height)) return;
-        var room = new RectangleGeometry(new Rect(0, 0, Math.Max(0, title.Width - delta), title.Height));
+        double held = Math.Max(0, title.Width - delta);
+        var room = new RectangleGeometry(new Rect((title.Width - held) / 2, 0, held, title.Height));
         title.Clip = room;
         var open = Timed(new RectAnimation { To = new Rect(0, 0, title.Width, title.Height), EasingFunction = easing }, duration, track);
         open.Completed += (_, _) => { if (ReferenceEquals(title.Clip, room)) title.Clip = null; };
