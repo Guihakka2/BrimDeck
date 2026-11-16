@@ -27,6 +27,7 @@ try
     NoticeCoreTests.Run(root, Check);
     RowBatchesTests.Run(Check);
     NoticeWindowsAppTests.Run(Check);
+    NoticeFocusTests.Run(Check);
     NoticeFlashTests.Run(Check);
     NoticeTimeTests.Run(Check);
     AuditFollowupTests.Run(Check);
