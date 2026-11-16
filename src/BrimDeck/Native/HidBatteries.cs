@@ -418,7 +418,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         // The ROG Omni receivers, each read as a whole (its pairing table, then its paired devices).
         foreach (var receiver in infos.Where(info => info.Vendor == Asus.Vendor && info.Product == Asus.OmniReceiver && !info.Bluetooth && !Off(info)).GroupBy(info => info.Group))
             if (ask) Try(() => ReadOmni([.. receiver], claimed)); else foreach (var each in receiver) claimed.Add(each.Path);
-        foreach (var info in infos)
+        foreach (var info in infos.OrderBy(info => info.Vendor == Dongles.WlmouseVendor && info.UsagePage == 0xFFFF && info.Usage != 0 ? 1 : 0))
         {
             if (claimed.Contains(info.Path) || Off(info)) continue;
             if (info.Vendor == PlayStation.Vendor && (PlayStation.IsDualSense(info.Product) || PlayStation.IsDualShock(info.Product)) && info.UsagePage == 0x01 && info.Usage == 0x05)
@@ -1201,18 +1201,43 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     }
 
     // The 0x83 exchange (Dongles.F83): the request set once, the reply got back until it comes (HaloBattery's 34 ms, then up to
-    // fifteen reads 50 ms apart). A collection that refuses the request is not the one.
+    // fifteen reads 50 ms apart; WLmouse's web driver waits 100 ms and re-sends on 0xA2). A collection that refuses the request is not the one.
     private static IEnumerable<DeviceBattery> F83(HidInfo info, HashSet<string> claimed)
     {
         if (Dongles.F83Find(info.Vendor, info.Product) is not { } model) return [];
         using var device = new HidDevice(info);
-        if (!device.SetFeature(Dongles.F83Request(model))) return [];
-        Thread.Sleep(34);
+        var request = Dongles.F83Request(model);
+        bool wlmouse = Dongles.IsWlmouseF83(model);
         BatteryRead? read = null;
-        for (int attempt = 0; attempt < 15 && read is null; attempt++)
+        if (device.SetFeature(request))
         {
-            if (attempt > 0) Thread.Sleep(50);
-            if (device.GetFeature(0, Math.Max(65, device.FeatureLength)) is { } reply) read = Dongles.F83Battery(model, reply);
+            Thread.Sleep(wlmouse ? 100 : 34);
+            int resends = 0;
+            for (int attempt = 0; attempt < 15 && read is null; attempt++)
+            {
+                if (attempt > 0) Thread.Sleep(wlmouse ? 60 : 50);
+                var reply = device.GetFeature(0, Math.Max(65, device.FeatureLength));
+                if (reply is null) continue;
+                read = Dongles.F83Battery(model, reply);
+                if (read is null && wlmouse && resends < 4 && reply.Length > 1 && (reply[0] == 0xA2 || reply[1] == 0xA2))
+                {
+                    device.SetFeature(request);
+                    Thread.Sleep(80);
+                    resends++;
+                }
+            }
+        }
+        if (wlmouse && read is null && info.InputLength > 0)
+        {
+            long deadline = Environment.TickCount64 + 500;
+            while (read is null)
+            {
+                long left = deadline - Environment.TickCount64;
+                if (left <= 0) break;
+                var pkt = device.Read((int)left);
+                if (pkt is null) break;
+                read = Dongles.WlmouseHeartbeat(pkt);
+            }
         }
         if (read is not { } battery) return [];
         claimed.Add(info.Path);
