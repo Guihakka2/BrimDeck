@@ -36,6 +36,7 @@ try
     RingLetterTests.Run(root, Check);
     QuotaRingTests.Run(root, Check);
     PanelThemeTests.Run(root, Check);
+    DaylightTests.Run(root, Check);
     PanelThemeEditorTests.Run(root, Check);
     PixelBlocksTests.Run(root, Check);
     ThemeCoverageTests.Run(Check, Environment.GetEnvironmentVariable("BRIMDECK_THEME_REPORT") == "1");
