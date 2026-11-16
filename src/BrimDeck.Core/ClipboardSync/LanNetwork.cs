@@ -8,6 +8,7 @@ namespace BrimDeck.Core.ClipboardSync;
 public sealed record LanInterface(string Name, IPAddress Address, int PrefixLength)
 {
     public string Label => $"{Name} · {Address}/{PrefixLength}";
+    internal int Index { get; init; }
 }
 
 public sealed class LanHostAddressUnavailableException()
@@ -26,7 +27,9 @@ public static class LanNetwork
             NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.GigabitEthernet
             or NetworkInterfaceType.FastEthernetFx or NetworkInterfaceType.FastEthernetT)
         .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses
-            .Select(address => new LanInterface(adapter.Name, address.Address, address.PrefixLength))));
+            .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork)
+            .Select(address => new LanInterface(adapter.Name, address.Address, address.PrefixLength)
+            { Index = adapter.GetIPProperties().GetIPv4Properties()?.Index ?? 0 })));
 
     public static IReadOnlyList<LanInterface> Eligible(IEnumerable<LanInterface> interfaces) => interfaces
         .Where(adapter => IsPrivate(adapter.Address) && adapter.PrefixLength is > 0 and <= 32)
@@ -51,6 +54,16 @@ public static class LanNetwork
         uint remote = BinaryPrimitives.ReadUInt32BigEndian(peer.GetAddressBytes());
         int hostBits = 32 - adapter.PrefixLength;
         return local >> hostBits == remote >> hostBits;
+    }
+
+    internal static IPAddress? BroadcastAddress(LanInterface adapter)
+    {
+        if (!IsPrivate(adapter.Address) || adapter.PrefixLength is < 1 or > 30) return null;
+        var bytes = adapter.Address.GetAddressBytes();
+        uint address = BinaryPrimitives.ReadUInt32BigEndian(bytes);
+        uint host = uint.MaxValue >> adapter.PrefixLength;
+        BinaryPrimitives.WriteUInt32BigEndian(bytes, address | host);
+        return new IPAddress(bytes);
     }
 
     private static bool IsPrivate(IPAddress address)

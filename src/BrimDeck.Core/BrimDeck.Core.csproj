@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="BrimDeck.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Built-in panel themes and the custom-theme template; see PanelThemes. -->
     <!-- Fixed resource names: a built-in theme's id is its file name (PanelThemes.BuiltInIndex). -->
     <EmbeddedResource Include="Themes\*.json" LogicalName="BrimDeck.Core.Themes.%(Filename)%(Extension)" />

@@ -67,14 +67,23 @@ public sealed partial class SettingsWindow
         _palette.Apply(dialog.Resources); Native.SettingsChrome.Apply(dialog);
         dialog.SourceInitialized += (_, _) => Native.SettingsChrome.SetTheme(dialog, _palette.Dark);
         TextOptions.SetTextFormattingMode(dialog, TextFormattingMode.Display);
-        var layout = new DockPanel { Margin = new Thickness(28) };
+        var layout = new DockPanel { Margin = new Thickness(24) };
+        var heading = TextLine(title, 19, TextPrimary, FontWeights.SemiBold);
+        heading.Margin = new Thickness(0, 0, 0, 16);
+        DockPanel.SetDock(heading, Dock.Top);
+        layout.Children.Add(heading);
         var close = ActionButton(Loc.T("关闭", "Close"), dialog.Close);
         close.Style = (Style)FindResource("SettingsOutlineButton");
         close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Margin = new Thickness(0, 16, 0, 0);
         DockPanel.SetDock(close, Dock.Bottom);
         layout.Children.Add(close);
-        layout.Children.Add(panel);
+        layout.Children.Add(new ScrollViewer
+        {
+            Content = panel,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = Math.Max(220, SystemParameters.WorkArea.Height - 175)
+        });
         dialog.Content = layout;
         dialog.PreviewKeyDown += (_, e) =>
         {
@@ -84,10 +93,30 @@ public sealed partial class SettingsWindow
         };
         return dialog;
     }
+    private TextBlock SyncDialogNote(string message)
+    {
+        var note = TextLine(message, 13, TextSecondary);
+        note.TextWrapping = TextWrapping.Wrap;
+        note.Margin = new Thickness(0, 0, 0, 12);
+        return note;
+    }
+    private Border SyncLargeCode(string value)
+    {
+        var text = TextLine(value, 32, TextPrimary, FontWeights.SemiBold);
+        text.FontFamily = new FontFamily("Consolas");
+        text.HorizontalAlignment = HorizontalAlignment.Center;
+        var code = new Border
+        {
+            Child = text, CornerRadius = new CornerRadius(8), Padding = new Thickness(16, 12, 16, 12),
+            BorderThickness = new Thickness(1), Margin = new Thickness(0, 2, 0, 8)
+        };
+        code.SetResourceReference(Border.BackgroundProperty, "SettingsInput");
+        code.SetResourceReference(Border.BorderBrushProperty, "SettingsBorder");
+        return code;
+    }
     private void EditSyncDeviceName()
     {
         var panel = new StackPanel(); var dialog = SyncDialog(Loc.T("本机设备名称", "Device name"), panel);
-        panel.Children.Add(TextLine(Loc.T("本机设备名称", "Device name"), 18, TextPrimary, FontWeights.SemiBold));
         var note = TextLine(Loc.T("用于新连接的设备识别。已连接设备的在线改名规则仍在核实。", "Identifies this device for new connections. Renaming connected devices is still being verified."), 12, TextSecondary);
         note.TextWrapping = TextWrapping.Wrap; note.Margin = new Thickness(0, 12, 0, 18); panel.Children.Add(note);
         var input = new TextBox { Style = (Style)FindResource("SettingsField"), Text = _app.ClipboardSync.Accounts.DeviceName, MaxLength = 48 };
@@ -154,7 +183,6 @@ public sealed partial class SettingsWindow
         CancellationTokenSource? attempt = null;
         Task active = Task.CompletedTask;
         bool closed = false, switching = false;
-        panel.Children.Add(TextLine(Loc.T("连接微信输入法", "Connect WeType"), 20, TextPrimary, FontWeights.SemiBold));
         var device = TextLine(service.Accounts.DeviceName, 12, TextSecondary); device.Margin = new Thickness(0, 8, 0, 22); panel.Children.Add(device);
         var notice = TextLine(Loc.T(
             "配对成功后，微信输入法可能自动开启个人词库、常用语、AI 录音笔和剪贴板同步。请在微信输入法中检查并关闭不需要的项目。",
@@ -269,7 +297,9 @@ public sealed partial class SettingsWindow
         {
             work.Children.Clear();
             Note(Loc.T("在另一台设备的微信输入法中输入此配对码。", "Enter this code in WeType on another device."));
-            var codeLabel = TextLine("···", 32, TextPrimary, FontWeights.SemiBold); codeLabel.HorizontalAlignment = HorizontalAlignment.Center; work.Children.Add(codeLabel);
+            var codeCard = SyncLargeCode("···");
+            var codeLabel = (TextBlock)codeCard.Child;
+            work.Children.Add(codeCard);
             var status = TextLine(Loc.T("正在获取配对码…", "Requesting code…"), 12, TextSecondary); status.TextWrapping = TextWrapping.Wrap; status.Margin = new Thickness(0, 18, 0, 12); work.Children.Add(status);
             using var client = new WeTypeSyncClient(service.Accounts.WeType, service.Save);
             string? code = null;
@@ -316,7 +346,7 @@ public sealed partial class SettingsWindow
             finally
             {
                 if (confirm is not null) work.Children.Remove(confirm);
-                codeLabel.Visibility = Visibility.Collapsed;
+                codeCard.Visibility = Visibility.Collapsed;
                 if (code is not null && !service.Connected(false))
                 {
                     using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));

@@ -27,7 +27,6 @@ public sealed partial class SettingsWindow
             _syncWatching = true; _app.ClipboardSync.Changed += RefreshSyncStatus;
             Closed += (_, _) => { _app.ClipboardSync.Changed -= RefreshSyncStatus; _syncNameTimer?.Stop(); };
         }
-        SyncNote(Loc.T("与局域网内的 BrimDeck 设备或手机输入法同步复制的文字。", "Sync copied text with BrimDeck on your local network or with a phone keyboard."));
         var name = TextLine(_app.ClipboardSync.Accounts.DeviceName, 12, TextSecondary);
         var rename = ActionButton(Loc.T("修改名称", "Rename"), EditSyncDeviceName);
         var nameRow = Row(Loc.T("本机名称", "This device"), rename, name);
@@ -37,66 +36,79 @@ public sealed partial class SettingsWindow
         _ = RefreshWeTypeNameAsync();
         SyncNote(Loc.T("同步连接期间新复制的内容。文字单条最多 256 KiB，图片仅支持局域网同步。", "Sync content copied while connected. Text is limited to 256 KiB per item. Images sync over LAN only."));
     }
-    private void AddSyncProvider(bool doubao)
+    private StackPanel AddSyncSection(string title, string detail, FrameworkElement action, out TextBlock status)
     {
-        var service = _app.ClipboardSync;
-        var panel = new StackPanel();
-        var card = new Border { Child = panel, CornerRadius = new CornerRadius(12), Padding = new Thickness(22, 18, 22, 14),
-            BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 16) };
+        var content = new StackPanel();
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var labels = new StackPanel { Margin = new Thickness(0, 0, 16, 0) };
+        labels.Children.Add(TextLine(title, 16, TextPrimary, FontWeights.SemiBold));
+        var description = TextLine(detail, 12, TextSecondary);
+        description.TextWrapping = TextWrapping.Wrap;
+        description.Margin = new Thickness(0, 4, 0, 0);
+        labels.Children.Add(description);
+        status = TextLine("", 12, TextSecondary);
+        status.Margin = new Thickness(0, 8, 0, 0);
+        status.TextWrapping = TextWrapping.Wrap;
+        labels.Children.Add(status);
+        header.Children.Add(labels);
+        action.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(action, 1);
+        header.Children.Add(action);
+        content.Children.Add(header);
+        var card = new Border
+        {
+            Child = content, CornerRadius = new CornerRadius(12), Padding = new Thickness(18, 16, 18, 16),
+            BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 12)
+        };
         card.SetResourceReference(Border.BackgroundProperty, "SettingsSurface");
         card.SetResourceReference(Border.BorderBrushProperty, "SettingsBorder");
         Target.Children.Add(card);
-        var heading = TextLine(doubao ? Loc.T("豆包输入法", "Doubao IME") : Loc.T("微信输入法", "WeType"), 16, TextPrimary, FontWeights.SemiBold);
-        panel.Children.Add(heading);
-        var description = TextLine(doubao ? Loc.T("使用与手机相同的豆包账号", "Use the same Doubao account as your phone") : Loc.T("通过手机上的配对码连接", "Connect using a pairing code from your phone"), 12, TextSecondary);
-        description.Margin = new Thickness(0, 6, 0, 16); description.TextWrapping = TextWrapping.Wrap; panel.Children.Add(description);
-        var state = TextLine("", 12, TextSecondary); state.TextWrapping = TextWrapping.Wrap;
-        if (doubao) _doubaoSyncStatus = state; else _weTypeSyncStatus = state;
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-        var connect = ActionButton(doubao ? Loc.T("登录豆包", "Sign in to Doubao") : Loc.T("配对设备", "Pair device"), () => { }, primary: true);
-        connect.MinWidth = 96; connect.Padding = new Thickness(16, 8, 16, 8);
-        AutomationProperties.SetAutomationId(connect, doubao ? "clipboard-sync-doubao-connect" : "clipboard-sync-wetype-connect");
-        connect.IsEnabled = !service.Connected(doubao);
-        buttons.Children.Add(connect);
-        var disconnect = ActionButton(Loc.T("断开连接", "Disconnect"), () =>
-        {
-            Change(s => { if (doubao) s.DoubaoClipboardSync = false; else s.WeTypeClipboardSync = false; });
-            service.Disconnect(doubao); ShowPage(ClipboardSyncSettingsPage);
-        });
-        disconnect.Style = (Style)FindResource("SettingsOutlineButton");
-        disconnect.Padding = new Thickness(16, 8, 16, 8);
-        disconnect.Visibility = service.Connected(doubao) ? Visibility.Visible : Visibility.Collapsed;
-        connect.Visibility = service.Connected(doubao) ? Visibility.Collapsed : Visibility.Visible;
-        buttons.Children.Add(disconnect);
-        var connection = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
-        DockPanel.SetDock(buttons, Dock.Right); connection.Children.Add(buttons);
-        state.VerticalAlignment = VerticalAlignment.Center; connection.Children.Add(state); panel.Children.Add(connection);
-        if (doubao)
-        {
-            connect.Click += async (_, _) => await OpenClipboardConnectorAsync(true);
-            var pending = TextLine(Loc.T("在系统浏览器的独立窗口登录，完成后自动连接。", "Sign in in a separate system-browser window. Connection is completed automatically."), 12, TextSecondary);
-            pending.TextWrapping = TextWrapping.Wrap; pending.Margin = new Thickness(0, 0, 0, 12); panel.Children.Add(pending);
-            if (service.Connected(true)) AddDoubaoCapabilityCheck(panel);
+        return content;
+    }
 
-        }
-        else
+    private static Border SyncDivider()
+    {
+        var divider = new Border { Height = 1, Margin = new Thickness(0, 12, 0, 8) };
+        divider.SetResourceReference(Border.BackgroundProperty, "SettingsBorder");
+        return divider;
+    }
+
+    private void AddSyncProvider(bool doubao)
+    {
+        var service = _app.ClipboardSync;
+        bool connected = service.Connected(doubao);
+        var action = ActionButton(connected ? Loc.T("断开连接", "Disconnect")
+            : doubao ? Loc.T("登录豆包", "Sign in to Doubao") : Loc.T("配对设备", "Pair device"), () => { });
+        action.Style = (Style)FindResource("SettingsOutlineButton");
+        AutomationProperties.SetAutomationId(action, doubao ? "clipboard-sync-doubao-connect" : "clipboard-sync-wetype-connect");
+        action.Click += async (_, _) =>
+        {
+            if (!connected) { await OpenClipboardConnectorAsync(doubao); return; }
+            Change(s => { if (doubao) s.DoubaoClipboardSync = false; else s.WeTypeClipboardSync = false; });
+            service.Disconnect(doubao);
+            ShowPage(ClipboardSyncSettingsPage);
+        };
+        var panel = AddSyncSection(doubao ? Loc.T("豆包输入法", "Doubao IME") : Loc.T("微信输入法", "WeType"),
+            doubao ? Loc.T("在独立浏览器窗口登录豆包账号。", "Sign in to the same Doubao account in a separate browser window.")
+                : Loc.T("通过微信输入法的六位配对码连接。", "Connect with a six-digit pairing code from WeType."),
+            action, out var status);
+        if (doubao) _doubaoSyncStatus = status; else _weTypeSyncStatus = status;
+        if (!connected) return;
+        panel.Children.Add(SyncDivider());
+        if (!doubao)
         {
             _weTypeSyncName = TextLine(service.Accounts.WeType.DisplayName, 12, TextSecondary);
-            _weTypeSyncName.TextWrapping = TextWrapping.Wrap; _weTypeSyncName.Margin = new Thickness(0, 0, 0, 12);
-            if (service.Connected(false)) panel.Children.Add(_weTypeSyncName);
-            connect.Click += async (_, _) => await OpenClipboardConnectorAsync(false);
+            _weTypeSyncName.TextWrapping = TextWrapping.Wrap;
+            panel.Children.Add(_weTypeSyncName);
         }
-        var divider = new Border { Height = 1, Margin = new Thickness(0, 4, 0, 8) };
-        divider.SetResourceReference(Border.BackgroundProperty, "SettingsBorder"); panel.Children.Add(divider);
         panel.Children.Add(Toggle(Loc.T("自动同步文字", "Automatically sync text"), doubao ? S.DoubaoClipboardSync : S.WeTypeClipboardSync,
             value => { Change(s => { if (doubao) s.DoubaoClipboardSync = value; else s.WeTypeClipboardSync = value; }); RefreshSyncStatus(); },
-            enabled: !service.TestMode && service.Connected(doubao), help: Loc.T("开启后上传新复制的文字，并将收到的文字写入本机剪贴板。不记录的应用和隐私标记同样适用。", "Upload new copies and write received text to this PC's clipboard. Excluded apps and privacy markers apply.")));
+            enabled: !service.TestMode, help: Loc.T("仅同步新复制的文字，沿用剪贴板的排除应用和隐私设置。", "Sync new copied text with your clipboard app exclusions and privacy settings.")));
+        if (doubao) AddDoubaoCapabilityCheck(panel);
         if (service.TestMode)
-        {
-            var test = ActionButton(Loc.T("测试标记", "Test marker"), () => ShowSyncMarkerTest(doubao));
-            test.IsEnabled = service.Connected(doubao);
-            panel.Children.Add(test);
-        }
+            panel.Children.Add(ActionButton(Loc.T("测试标记", "Test marker"), () => ShowSyncMarkerTest(doubao)));
     }
     private void AddDoubaoCapabilityCheck(StackPanel panel)
     {

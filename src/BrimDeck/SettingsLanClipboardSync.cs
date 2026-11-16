@@ -6,6 +6,8 @@ using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using BrimDeck.Core;
 using BrimDeck.Core.ClipboardSync;
 
@@ -18,197 +20,234 @@ public sealed partial class SettingsWindow
     private void AddLanSync()
     {
         var service = _app.ClipboardSync;
-        var panel = new StackPanel();
-        var card = new Border
-        {
-            Child = panel,
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(22, 18, 22, 14),
-            BorderThickness = new Thickness(1),
-            Margin = new Thickness(0, 0, 0, 16)
-        };
-        card.SetResourceReference(Border.BackgroundProperty, "SettingsSurface");
-        card.SetResourceReference(Border.BorderBrushProperty, "SettingsBorder");
-        panel.Children.Add(TextLine(Loc.T("局域网同步", "Local network sync"), 16, TextPrimary, FontWeights.SemiBold));
-        var status = TextLine("", 12, TextSecondary);
-        status.Margin = new Thickness(0, 6, 0, 12);
-        status.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(status);
-        _lanSyncStatus = status;
-
         bool paired = service.Accounts.Lan is not null;
+        var action = ActionButton(paired ? Loc.T("解除配对", "Unpair") : Loc.T("配对设备", "Pair device"), () => { }, !paired);
+        var panel = AddSyncSection(Loc.T("局域网同步", "Local network sync"),
+            Loc.T("两台电脑直接同步文字和图片。", "Sync text and images directly between two PCs."),
+            action, out var status);
+        _lanSyncStatus = status;
+        action.Click += async (_, _) =>
+        {
+            if (!paired) { await OpenLanPairingAsync(); return; }
+            try
+            {
+                service.SetLanPeer(null);
+                Change(s => s.LanClipboardSync = false);
+                ShowPage(ClipboardSyncSettingsPage);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+            { status.Text = Loc.T("无法保存配对设置，请重试。", "Could not save the pairing settings. Try again."); }
+        };
         if (paired)
         {
-            var unpair = ActionButton(Loc.T("解除配对", "Unpair"), () =>
-            {
-                try
-                {
-                    service.SetLanPeer(null);
-                    Change(s => s.LanClipboardSync = false);
-                    ShowPage(ClipboardSyncSettingsPage);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
-                {
-                    status.Text = Loc.T("无法保存配对设置，请重试。", "Could not save the pairing settings. Try again.");
-                }
-            });
-            unpair.HorizontalAlignment = HorizontalAlignment.Left;
-            panel.Children.Add(unpair);
+            panel.Children.Add(SyncDivider());
+            panel.Children.Add(Toggle(Loc.T("自动同步文字和图片", "Automatically sync text and images"), S.LanClipboardSync && !service.TestMode,
+                value => Change(s => s.LanClipboardSync = value), enabled: !service.TestMode,
+                help: Loc.T("两台设备均需开启。图片以 PNG 传输，单张最多 8 MiB。", "Enable this on both devices. Images sync as PNG, up to 8 MiB each.")));
         }
-        else
-        {
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-            foreach (bool host in new[] { true, false })
-            {
-                var button = ActionButton(host ? Loc.T("创建邀请码", "Create invitation") : Loc.T("输入邀请码", "Enter invitation"), () => { });
-                button.Margin = new Thickness(0, 0, 8, 0);
-                button.Click += async (_, _) => await OpenLanPairingAsync(host);
-                buttons.Children.Add(button);
-            }
-            panel.Children.Add(buttons);
-        }
-        panel.Children.Add(Toggle(Loc.T("自动同步文字和图片", "Automatically sync text and images"), S.LanClipboardSync && paired && !service.TestMode,
-            value => Change(s => s.LanClipboardSync = value), enabled: paired && !service.TestMode,
-            help: Loc.T("两台设备均需开启。图片以 PNG 传输，单张最多 8 MiB。旧版对端只支持文字。", "Enable this on both devices. Images sync as PNG, up to 8 MiB each. Older builds support text only.")));
-        Target.Children.Add(card);
     }
 
     private void RefreshLanSyncStatus()
     {
         if (_lanSyncStatus is null) return;
         var service = _app.ClipboardSync;
-        _lanSyncStatus.Text = service.Accounts.Lan is null
-            ? Loc.T("将同一局域网内的两台 Windows 电脑配对。", "Pair two Windows PCs on the same local network.")
-            : !S.LanClipboardSync || service.TestMode
-                ? Loc.T("已配对 · 同步已暂停", "Paired · Sync paused")
-                : service.LanStatus;
+        var peer = service.Accounts.Lan;
+        _lanSyncStatus.Text = peer is null ? Loc.T("未配对", "Not paired")
+            : !S.LanClipboardSync || service.TestMode ? Loc.T("已配对 · 同步已暂停", "Paired · Sync paused")
+            : service.LanStatus;
+        if (peer?.DeviceName is { Length: > 0 } name) _lanSyncStatus.Text = name + " · " + _lanSyncStatus.Text;
     }
 
-    private async Task OpenLanPairingAsync(bool host)
+    private async Task OpenLanPairingAsync()
     {
         if (_clipboardConnectorOpen) return;
         _clipboardConnectorOpen = true;
         var panel = new StackPanel();
-        var dialog = SyncDialog(host ? Loc.T("创建局域网邀请码", "Create LAN invitation") : Loc.T("输入局域网邀请码", "Enter LAN invitation"), panel);
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(_app.Lifetime.Token);
-        var token = stop.Token;
-        dialog.Closed += (_, _) => stop.Cancel();
-        var note = TextLine(host
-            ? Loc.T("在另一台电脑的 BrimDeck 中输入邀请码。邀请码两分钟内有效，请仅提供给要配对的设备。", "Enter the invitation in BrimDeck on the other PC. It expires in two minutes. Share it only with the device you want to pair.")
-            : Loc.T("输入另一台电脑上的 BrimDeck 邀请码。两台电脑必须位于同一局域网。", "Enter the BrimDeck invitation from the other PC. Both PCs must be on the same local network."), 12, TextSecondary);
-        note.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(note);
-        var addresses = new ComboBox
-        {
-            Margin = new Thickness(0, 12, 0, 0),
-            Visibility = host ? Visibility.Visible : Visibility.Collapsed,
-            DisplayMemberPath = nameof(LanInterface.Label)
-        };
-        AutomationProperties.SetName(addresses, Loc.T("本机局域网地址", "Local network address"));
-        panel.Children.Add(addresses);
-        var input = new TextBox
-        {
-            Style = (Style)FindResource("SettingsField"),
-            IsReadOnly = host,
-            Visibility = host ? Visibility.Collapsed : Visibility.Visible,
-            TextWrapping = TextWrapping.Wrap,
-            MaxLength = 128,
-            Margin = new Thickness(0, 12, 0, 0)
-        };
-        AutomationProperties.SetName(input, Loc.T("局域网邀请码", "LAN invitation"));
-        panel.Children.Add(input);
-        var status = TextLine("", 12, TextSecondary);
-        status.TextWrapping = TextWrapping.Wrap;
-        status.Margin = new Thickness(0, 12, 0, 0);
-        panel.Children.Add(status);
-        var submit = ActionButton(host ? Loc.T("生成邀请码", "Generate invitation") : Loc.T("连接", "Connect"), () => { }, true);
-        submit.Margin = new Thickness(0, 12, 0, 0);
-        submit.IsEnabled = false;
-        addresses.SelectionChanged += (_, _) => submit.IsEnabled = addresses.SelectedItem is LanInterface;
-        input.TextChanged += (_, _) => { if (!host) submit.IsEnabled = !string.IsNullOrWhiteSpace(input.Text); };
-        panel.Children.Add(submit);
+        var dialog = SyncDialog(Loc.T("局域网配对", "Pair on your local network"), panel);
+        var modes = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 18) };
+        var show = ActionButton(Loc.T("显示配对码", "Show pairing code"), () => { });
+        var enter = ActionButton(Loc.T("输入配对码", "Enter pairing code"), () => { });
+        show.Style = enter.Style = (Style)FindResource("SettingsOutlineButton");
+        enter.Margin = new Thickness(8, 0, 0, 0);
+        modes.Children.Add(show);
+        modes.Children.Add(enter);
+        panel.Children.Add(modes);
+        var body = new StackPanel();
+        panel.Children.Add(body);
+        var note = SyncDialogNote(Loc.T("在一台电脑上显示配对码，在另一台上输入。", "Show a pairing code on one PC and enter it on the other."));
+        body.Children.Add(note);
+
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(_app.Lifetime.Token);
+        var dialogToken = lifetime.Token;
+        dialog.Closed += (_, _) => lifetime.Cancel();
+        CancellationTokenSource? attempt = null;
         Task active = Task.CompletedTask;
+        bool switching = false;
 
-        void RefreshAddresses()
+        async Task SelectAsync(bool host)
         {
-            IReadOnlyList<LanInterface> available;
-            try { available = LanNetwork.Interfaces(); }
-            catch (NetworkInformationException) { available = []; }
-            var previous = addresses.SelectedItem as LanInterface;
-            addresses.ItemsSource = available;
-            addresses.SelectedItem = available.FirstOrDefault(adapter => adapter == previous) ?? LanNetwork.DefaultHost(available);
-            submit.IsEnabled = addresses.SelectedItem is LanInterface;
-        }
-        Button? refresh = null;
-        if (host)
-        {
-            RefreshAddresses();
-            refresh = ActionButton(Loc.T("刷新网卡", "Refresh network adapters"), RefreshAddresses);
-            refresh.HorizontalAlignment = HorizontalAlignment.Left;
-            refresh.Margin = new Thickness(0, 8, 0, 0);
-            panel.Children.Insert(panel.Children.IndexOf(addresses) + 1, refresh);
-            if (!submit.IsEnabled)
-                status.Text = addresses.Items.Count == 0
-                    ? Loc.T("未找到可用的局域网地址。", "No local network address is available.")
-                    : Loc.T("请选择与另一台电脑同子网的网卡地址。", "Select the network address on the same subnet as the other PC.");
-        }
-
-        async Task PairAsync()
-        {
-            submit.IsEnabled = addresses.IsEnabled = false;
-            if (refresh is not null) refresh.IsEnabled = false;
-            if (!host) input.IsEnabled = false;
+            if (switching || dialogToken.IsCancellationRequested) return;
+            switching = true;
             try
             {
-                LanClipboardPeer peer;
-                if (host)
-                {
-                    if (addresses.SelectedItem is not LanInterface network) return;
-                    using var invitation = new LanClipboardLink.Invitation(network.Address);
-                    input.Visibility = Visibility.Visible;
-                    input.Text = invitation.Code;
-                    status.Text = Loc.T("正在等待另一台电脑连接到 ", "Waiting for the other PC to connect to ") + $"{network.Address}:{invitation.Port}";
-                    peer = await invitation.AcceptAsync(token);
-                }
-                else
-                {
-                    status.Text = Loc.T("正在连接局域网设备…", "Connecting to the LAN device…");
-                    peer = await LanClipboardLink.JoinAsync(input.Text, token);
-                }
+                attempt?.Cancel();
+                await active;
+                if (dialogToken.IsCancellationRequested) return;
+                show.IsEnabled = !host;
+                enter.IsEnabled = host;
+                active = RunModeAsync(host);
+            }
+            finally { switching = false; }
+        }
+
+        async Task RunModeAsync(bool host)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(dialogToken);
+            attempt = stop;
+            var token = stop.Token;
+            try
+            {
+                LanClipboardPeer peer = host ? await ShowCodeAsync(token) : await EnterCodeAsync(token);
                 token.ThrowIfCancellationRequested();
                 _app.ClipboardSync.SetLanPeer(peer);
                 dialog.Close();
             }
             catch (Exception ex) when (token.IsCancellationRequested && ex is not OutOfMemoryException) { }
-            catch (Exception ex) when (ex is LanHostAddressUnavailableException or LanNetworkChangedException)
-            { status.Text = Loc.T("局域网地址已变更。请选择当前地址并重新生成邀请码。", "The network address changed. Select a current address and generate another invitation."); }
-            catch (LanPeerOffSubnetException)
-            { status.Text = Loc.T("当前没有与邀请地址同子网的连接。", "No local connection shares the invitation's subnet."); }
-            catch (OperationCanceledException)
+            catch (Exception ex) when (ex is IOException or InvalidDataException or SocketException or AuthenticationException or
+                CryptographicException or UnauthorizedAccessException or NetworkInformationException or OperationCanceledException)
             {
-                status.Text = host ? Loc.T("邀请码已过期，请重新生成。", "The invitation expired. Generate a new one.")
-                    : Loc.T("连接超时，请检查两台设备是否在同一局域网及邀请码是否仍有效。", "Connection timed out. Check the local network and whether the invitation is still valid.");
+                body.Children.Clear();
+                body.Children.Add(SyncDialogNote(ex switch
+                {
+                    LanPairingDeclinedException => Loc.T("配对已拒绝。", "Pairing was declined."),
+                    LanPairingRateLimitedException => Loc.T("尝试次数过多，请稍后再试。", "Too many attempts. Try again later."),
+                    LanNetworkChangedException or LanPeerOffSubnetException => Loc.T("网络已变更或设备不在同一子网。请重新搜索后再试。", "The network changed or the devices are on different subnets. Search again."),
+                    OperationCanceledException => Loc.T("等待超时，可重新开始配对。", "Pairing timed out. Start again."),
+                    _ => Loc.T("配对未完成，请检查设备和配对码后重试。", "Pairing did not finish. Check the device and pairing code and try again.")
+                }));
+                show.IsEnabled = enter.IsEnabled = true;
             }
-            catch (FormatException) { status.Text = Loc.T("邀请码格式不正确。", "The invitation format is invalid."); }
-            catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or AuthenticationException or CryptographicException or UnauthorizedAccessException or NetworkInformationException)
-            { status.Text = Loc.T("无法配对，请检查局域网连接和邀请码。", "Could not pair. Check the local network and invitation."); }
             finally
             {
-                if (host)
-                {
-                    input.Clear();
-                    input.Visibility = Visibility.Collapsed;
-                }
-                if (!token.IsCancellationRequested)
-                {
-                    input.IsEnabled = addresses.IsEnabled = true;
-                    if (refresh is not null) refresh.IsEnabled = true;
-                    if (host) RefreshAddresses();
-                    else submit.IsEnabled = !string.IsNullOrWhiteSpace(input.Text);
-                }
+                attempt = null;
+                if (!dialogToken.IsCancellationRequested) show.IsEnabled = enter.IsEnabled = true;
             }
         }
-        submit.Click += (_, _) => { if (active.IsCompleted) active = PairAsync(); };
+
+        async Task<LanClipboardPeer> ShowCodeAsync(CancellationToken token)
+        {
+            body.Children.Clear();
+            body.Children.Add(SyncDialogNote(Loc.T("正在准备局域网配对…", "Preparing local network pairing…")));
+            using var host = await Task.Run(() => new LanClipboardLink.PairingHost(_app.ClipboardSync.Accounts.DeviceName), token);
+            token.ThrowIfCancellationRequested();
+            body.Children.Clear();
+            body.Children.Add(SyncDialogNote(Loc.T("请在另一台电脑选择此设备，并输入下方六位配对码。两分钟内有效。", "Select this PC on the other device and enter the six-digit pairing code. It expires in two minutes.")));
+            body.Children.Add(SyncLargeCode(host.Code));
+            return await host.AcceptAsync(ConfirmAsync, token);
+        }
+
+        async Task<LanClipboardPeer> EnterCodeAsync(CancellationToken token)
+        {
+            body.Children.Clear();
+            var description = SyncDialogNote(Loc.T("先在另一台电脑选择“显示配对码”。", "First, choose Show pairing code on the other PC."));
+            var devices = new ComboBox { DisplayMemberPath = nameof(LanPairingDevice.Label), IsEnabled = false };
+            AutomationProperties.SetName(devices, Loc.T("局域网设备", "Local network device"));
+            var code = new TextBox
+            {
+                Style = (Style)FindResource("SettingsField"),
+                MaxLength = 6, FontSize = 22, Height = 52, Width = 190,
+                TextAlignment = TextAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 0),
+                FontFamily = new FontFamily("Consolas")
+            };
+            AutomationProperties.SetName(code, Loc.T("六位配对码", "Six-digit pairing code"));
+            code.PreviewTextInput += (_, e) => e.Handled = e.Text.Any(c => !char.IsAsciiDigit(c));
+            var search = ActionButton(Loc.T("重新搜索", "Search again"), () => { });
+            search.Style = (Style)FindResource("SettingsOutlineButton");
+            var connect = ActionButton(Loc.T("继续", "Continue"), () => { }, true);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 0) };
+            connect.Margin = new Thickness(8, 0, 0, 0);
+            actions.Children.Add(search);
+            actions.Children.Add(connect);
+            body.Children.Add(description);
+            body.Children.Add(devices);
+            body.Children.Add(code);
+            body.Children.Add(actions);
+            var selected = new TaskCompletionSource<(LanPairingDevice Device, string Code)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool busy = false;
+            void EnableConnect() => connect.IsEnabled = !busy && devices.SelectedItem is LanPairingDevice && LanClipboardLink.IsPairingCode(code.Text);
+            devices.SelectionChanged += (_, _) => EnableConnect();
+            code.TextChanged += (_, _) => EnableConnect();
+            connect.Click += (_, _) =>
+            {
+                if (devices.SelectedItem is LanPairingDevice device && LanClipboardLink.IsPairingCode(code.Text))
+                    selected.TrySetResult((device, code.Text));
+            };
+            async Task FindAsync()
+            {
+                if (busy || token.IsCancellationRequested || selected.Task.IsCompleted) return;
+                busy = true;
+                search.IsEnabled = devices.IsEnabled = false;
+                EnableConnect();
+                description.Text = Loc.T("正在搜索同一局域网内的设备…", "Searching for devices on the same local network…");
+                try
+                {
+                    var found = await LanClipboardLink.DiscoverPairingDevicesAsync(token);
+                    token.ThrowIfCancellationRequested();
+                    devices.ItemsSource = found;
+                    devices.SelectedIndex = found.Count == 1 ? 0 : -1;
+                    devices.IsEnabled = found.Count > 0;
+                    description.Text = found.Count == 0
+                        ? Loc.T("未找到设备。确认两台电脑在同一局域网，且对端正在显示配对码。", "No devices found. Check that both PCs are on the same network and the other PC is showing its pairing code.")
+                        : Loc.T("选择对端设备，输入其六位配对码。", "Select the other PC and enter its six-digit pairing code.");
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                catch (Exception ex) when (ex is SocketException or NetworkInformationException or IOException)
+                { description.Text = Loc.T("搜索失败，可以重新搜索。", "Search failed. You can search again."); }
+                finally
+                {
+                    busy = false;
+                    if (!token.IsCancellationRequested) { search.IsEnabled = true; EnableConnect(); }
+                }
+            }
+            search.Click += async (_, _) => await FindAsync();
+            EnableConnect();
+            await FindAsync();
+            var choice = await selected.Task.WaitAsync(token);
+            body.Children.Clear();
+            body.Children.Add(SyncDialogNote(Loc.T("正在验证配对码…", "Verifying the pairing code…")));
+            return await LanClipboardLink.JoinPairingAsync(choice.Device, choice.Code, _app.ClipboardSync.Accounts.DeviceName, ConfirmAsync, token);
+        }
+
+        async Task<bool> ConfirmAsync(LanPairingConfirmation confirmation, CancellationToken token)
+        {
+            var decision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                token.ThrowIfCancellationRequested();
+                body.Children.Clear();
+                body.Children.Add(TextLine(confirmation.DeviceName, 16, TextPrimary, FontWeights.SemiBold));
+                body.Children.Add(SyncDialogNote(Loc.T("核对两台电脑显示的核对串。只有完全相同才确认。", "Compare the verification string on both PCs. Confirm only if it matches exactly.")));
+                body.Children.Add(SyncLargeCode(confirmation.Verification));
+                var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+                var accept = ActionButton(Loc.T("相同，确认配对", "Matches, confirm pairing"), () =>
+                {
+                    buttons.IsEnabled = false;
+                    body.Children.Add(SyncDialogNote(Loc.T("已确认，等待另一台电脑确认…", "Confirmed. Waiting for the other PC…")));
+                    decision.TrySetResult(true);
+                }, true);
+                var reject = ActionButton(Loc.T("不相同", "Does not match"), () => decision.TrySetResult(false));
+                reject.Style = (Style)FindResource("SettingsOutlineButton");
+                reject.Margin = new Thickness(8, 0, 0, 0);
+                buttons.Children.Add(accept);
+                buttons.Children.Add(reject);
+                body.Children.Add(buttons);
+            });
+            return await decision.Task.WaitAsync(token).ConfigureAwait(false);
+        }
+
+        show.Click += async (_, _) => await SelectAsync(true);
+        enter.Click += async (_, _) => await SelectAsync(false);
         try
         {
             dialog.ShowDialog();

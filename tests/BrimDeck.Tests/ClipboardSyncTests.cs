@@ -54,6 +54,7 @@ static class ClipboardSyncTests
         LanRoutes(check);
         LanFramesAsync(check).GetAwaiter().GetResult();
         LanImagesAsync(check).GetAwaiter().GetResult();
+        LanPairingTests.RunAsync(check).GetAwaiter().GetResult();
     }
 
     private static async Task LanImagesAsync(Action<string, bool> check)
@@ -181,9 +182,7 @@ static class ClipboardSyncTests
         catch (InvalidDataException) { oversized = true; }
         check("LAN refuses oversized outbound text", oversized);
 
-        bool invalidCode = false;
-        try { await LanClipboardLink.JoinAsync("BD-LAN-1.invalid", default); }
-        catch (FormatException) { invalidCode = true; }
-        check("LAN rejects malformed invitation before connecting", invalidCode);
+        check("LAN expects exactly six ASCII digits", LanClipboardLink.IsPairingCode("000024")
+            && !LanClipboardLink.IsPairingCode("BD-LAN-1.invalid") && !LanClipboardLink.IsPairingCode("１２３４５６"));
     }
 }

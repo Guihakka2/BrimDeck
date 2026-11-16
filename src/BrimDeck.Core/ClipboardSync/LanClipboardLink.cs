@@ -13,6 +13,7 @@ namespace BrimDeck.Core.ClipboardSync;
 public sealed record LanClipboardPeer(string Address, int Port, byte[] Fingerprint, byte[] Key, byte[]? HostCertificate)
 {
     public bool IsHost => HostCertificate is not null;
+    public string? DeviceName { get; init; }
 }
 
 public abstract record LanClipboardContent
@@ -21,11 +22,11 @@ public abstract record LanClipboardContent
     public sealed record Image(LanPng Png) : LanClipboardContent;
 }
 
-public static class LanClipboardLink
+public static partial class LanClipboardLink
 {
     private const string InvitePrefix = "BD-LAN-1.";
     private const int KeySize = 32;
-    private const byte Pair = 1, Sync = 2, SyncWithImages = 3;
+    private const byte Sync = 2, SyncWithImages = 3;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(8);
 
     public static IReadOnlyList<IPAddress> LocalAddresses() => LanNetwork.Interfaces().Select(n => n.Address).Distinct().ToArray();
@@ -34,108 +35,6 @@ public static class LanClipboardLink
     private static IPAddress RequireHostAddress(IPAddress address) =>
         LanNetwork.Interfaces().Any(adapter => adapter.Address.Equals(address))
             ? address : throw new LanHostAddressUnavailableException();
-
-    public sealed class Invitation : IDisposable
-    {
-        private readonly IPAddress _address;
-        private readonly TcpListener _listener;
-        private readonly int _port;
-        private readonly X509Certificate2 _certificate;
-        private readonly byte[] _secret = RandomNumberGenerator.GetBytes(KeySize);
-        private readonly byte[] _pin;
-
-        public Invitation(IPAddress address)
-        {
-            _address = RequireHostAddress(address);
-            using var key = RSA.Create(2048);
-            var request = new CertificateRequest("CN=BrimDeck LAN", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-            using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(5));
-            _certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pkcs12), null, X509KeyStorageFlags.Exportable);
-            _pin = _certificate.GetCertHash(HashAlgorithmName.SHA256);
-            try
-            {
-                _listener = Listen(_address, 0);
-                _port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-            }
-            catch { _certificate.Dispose(); throw; }
-        }
-
-        public int Port => _port;
-
-        public string Code
-        {
-            get
-            {
-                byte[] payload = new byte[6 + 2 * KeySize];
-                _address.GetAddressBytes().CopyTo(payload, 0);
-                BinaryPrimitives.WriteUInt16BigEndian(payload.AsSpan(4), (ushort)_port);
-                _pin.CopyTo(payload, 6);
-                _secret.CopyTo(payload, 6 + KeySize);
-                return InvitePrefix + Convert.ToBase64String(payload);
-            }
-        }
-
-        public async Task<LanClipboardPeer> AcceptAsync(CancellationToken cancellation)
-        {
-            using var network = new NetworkLifetime(cancellation);
-            using var expiry = CancellationTokenSource.CreateLinkedTokenSource(network.Token);
-            expiry.CancelAfter(TimeSpan.FromMinutes(2));
-            try
-            {
-                while (true)
-                {
-                    using var peer = await _listener.AcceptTcpClientAsync(expiry.Token);
-                    using var timeout = Timed(expiry.Token);
-                    try
-                    {
-                        ValidateRemote(peer, _address);
-                        using var stream = await SecureServerAsync(peer, _certificate, timeout.Token);
-                        await ReadProofAsync(stream, Pair, _secret, timeout.Token);
-                        var key = RandomNumberGenerator.GetBytes(KeySize);
-                        var config = new LanClipboardPeer(_address.ToString(), _port, _pin, key,
-                            _certificate.Export(X509ContentType.Pkcs12));
-                        await stream.WriteAsync(key, timeout.Token);
-                        return config;
-                    }
-                    catch (Exception ex) when (RejectedConnection(ex) && !expiry.IsCancellationRequested) { }
-                }
-            }
-            catch (OperationCanceledException) when (network.Token.IsCancellationRequested && !cancellation.IsCancellationRequested)
-            { throw new LanNetworkChangedException(); }
-            finally { _listener.Stop(); }
-        }
-
-        public void Dispose()
-        {
-            _listener.Stop();
-            _certificate.Dispose();
-            CryptographicOperations.ZeroMemory(_secret);
-        }
-    }
-
-    public static async Task<LanClipboardPeer> JoinAsync(string code, CancellationToken cancellation)
-    {
-        code = code.Trim();
-        if (!code.StartsWith(InvitePrefix, StringComparison.Ordinal) || code.Length != InvitePrefix.Length + 96)
-            throw new FormatException("Invalid BrimDeck invitation.");
-        byte[] payload = Convert.FromBase64String(code[InvitePrefix.Length..]);
-        if (payload.Length != 6 + 2 * KeySize) throw new FormatException("Invalid BrimDeck invitation.");
-        var address = new IPAddress(payload.AsSpan(0, 4));
-        int port = BinaryPrimitives.ReadUInt16BigEndian(payload.AsSpan(4, 2));
-        if (port == 0) throw new FormatException("Invalid BrimDeck port.");
-        var pin = payload.AsSpan(6, KeySize).ToArray();
-        byte[] key = new byte[KeySize];
-        try
-        {
-            using var peer = await ConnectAsync(address, port, pin, async (stream, token) =>
-            {
-                await WriteProofAsync(stream, Pair, payload.AsMemory(6 + KeySize), token);
-                await stream.ReadExactlyAsync(key, token);
-            }, cancellation);
-            return new(address.ToString(), port, pin, key, null);
-        }
-        finally { CryptographicOperations.ZeroMemory(payload); }
-    }
 
     public static async Task RunAsync(LanClipboardPeer config, Func<SslStream, CancellationToken, Task> session,
         CancellationToken cancellation)
