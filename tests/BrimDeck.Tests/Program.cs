@@ -37,6 +37,7 @@ try
     RingLetterTests.Run(root, Check);
     QuotaRingTests.Run(root, Check);
     PanelThemeTests.Run(root, Check);
+    DaylightTests.Run(root, Check);
     PanelThemeEditorTests.Run(root, Check);
     PixelBlocksTests.Run(root, Check);
     ThemeCoverageTests.Run(Check, Environment.GetEnvironmentVariable("BRIMDECK_THEME_REPORT") == "1");
@@ -63,6 +64,8 @@ try
     MonitorStartupTests.Run(Check);
     StripAdmissionTests.Run(Check);
     DevicesTests.Run(Check);
+    PhoneLinkCardTests.Run(Check);
+    PhoneLinkMergeTests.Run(Check);
     DeviceProtocolTests.Run(Check);
     DeviceSafetyTests.Run(Check);
     DeviceReadTests.Run(Check);
