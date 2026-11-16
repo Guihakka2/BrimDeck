@@ -29,6 +29,9 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
     private static readonly TimeSpan AliveEvery = TimeSpan.FromMinutes(5);
     private DateTime _aliveAt;
     private bool _alive;
+    // When the packages folder was last listed for the card; a scan that found none is not repeated on every tick.
+    private static readonly TimeSpan ScanEvery = TimeSpan.FromMinutes(5);
+    private DateTime _scannedAt;
 
     public void Start(DeviceDemand demand)
     {
@@ -47,6 +50,7 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
         _listed = false;
         _stamp = null;
         _reported = false;
+        _scannedAt = default;
         report(DeviceSource.PhoneLink, []);
     }
 
@@ -62,28 +66,28 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
     {
         if (_demand != DeviceDemand.Watch) return;
         _listed = true;
-        string? path = CardPath();
+        string? path = CardPath(force);
         if (path is null) { Clear(null); return; }
-        try
-        {
-            var file = new FileInfo(path);
-            if (!file.Exists) { Clear(null); return; }
-            // A card this old describes a phone that is no longer there; the Bluetooth entry, if any, stands in. Between
-            // Unverified and MaximumAge an idle phone keeps its reading only while Phone Link itself is running, so a card
-            // frozen by the app closing does not outlive it by hours.
-            var stamp = file.LastWriteTimeUtc;
-            var age = DateTime.UtcNow - stamp;
-            if (PhoneLinkCard.Expired(age) || (PhoneLinkCard.NeedsLiveness(age) && !Alive())) { Clear(null); return; }
-            // The same card as the last reading: Phone Link writes on every change, so there is nothing new to parse.
-            if (PhoneLinkCard.IsCurrent(stamp, _stamp, force)) return;
-            if (PhoneLinkCard.Parse(File.ReadAllText(path)) is not { } phone) { Clear(stamp); return; }
-            _stamp = stamp;
-            _reported = true;
-            report(DeviceSource.PhoneLink,
-                [new DeviceBattery(Key(phone.Name), phone.Name, DeviceKind.Phone, DeviceSource.PhoneLink, Devices.Clamp(phone.Percent)) { Charging = phone.Charging }]);
-        }
-        // Another app's file: it may be replaced as it is read, or the package may be gone. Not reading it this once costs nothing.
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Clear(null); }
+        var file = new FileInfo(path);
+        if (!file.Exists) { Clear(null); return; }
+        // A card this old describes a phone that is no longer there; the Bluetooth entry, if any, stands in. Between
+        // Unverified and MaximumAge an idle phone keeps its reading only while Phone Link itself is running, so a card
+        // frozen by the app closing does not outlive it by hours.
+        var stamp = file.LastWriteTimeUtc;
+        var age = DateTime.UtcNow - stamp;
+        if (PhoneLinkCard.Expired(age) || (PhoneLinkCard.NeedsLiveness(age) && !Alive())) { Clear(null); return; }
+        // The same card as the last reading: Phone Link writes on every change, so there is nothing new to parse.
+        if (PhoneLinkCard.IsCurrent(stamp, _stamp, force)) return;
+        string json;
+        // Another app's file, replaced as it is read: a read that fails says nothing about the phone, so the reading on
+        // hand stands and the next tick reads the card again.
+        try { json = File.ReadAllText(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+        if (PhoneLinkCard.Parse(json) is not { } phone) { Clear(stamp); return; }
+        _stamp = stamp;
+        _reported = true;
+        report(DeviceSource.PhoneLink,
+            [new DeviceBattery(Key(phone.Name), phone.Name, DeviceKind.Phone, DeviceSource.PhoneLink, Devices.Clamp(phone.Percent)) { Charging = phone.Charging }]);
     }
 
     // Drops the reading once: the phone is away, the card is stale, or it has nothing to say. A card that was read keeps its
@@ -114,10 +118,15 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
         return _alive;
     }
 
-    // The newest card of the Phone Link package, wherever Windows put this version of it.
-    private string? CardPath()
+    // The newest card of the Phone Link package, wherever Windows put this version of it. Looking for it lists the
+    // packages folder on the timer's thread, so a look that finds nothing waits ScanEvery before the next: an app that is
+    // not installed will not appear within seconds. A forced read looks at once.
+    private string? CardPath(bool force)
     {
         if (_path is { } cached && File.Exists(cached)) return cached;
+        var now = DateTime.UtcNow;
+        if (!force && now - _scannedAt < ScanEvery) return null;
+        _scannedAt = now;
         string? newest = null;
         DateTime newestAt = DateTime.MinValue;
         try

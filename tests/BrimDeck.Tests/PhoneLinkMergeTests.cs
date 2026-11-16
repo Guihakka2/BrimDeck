@@ -16,6 +16,8 @@ static class PhoneLinkMergeTests
         var merged = DeviceRoster.Merge([linked, bluetooth]);
         check("Phone Link: the primary reading replaces the same phone on Bluetooth",
             merged.Count == 1 && merged[0].Source == DeviceSource.PhoneLink && merged[0].Percent == 87 && merged[0].Charging);
+        check("Phone Link: the merged phone keeps its Bluetooth key",
+            merged.Count == 1 && merged[0].Key == "bt:AABBCCDDEEFF" && merged[0].Address == "AABBCCDDEEFF");
 
         check("Phone Link: without it the Bluetooth phone stands in",
             DeviceRoster.Merge([bluetooth]) is { Count: 1 } only && only[0].Source == DeviceSource.Bluetooth && only[0].Percent == 80);
@@ -23,6 +25,8 @@ static class PhoneLinkMergeTests
             DeviceRoster.Merge([linked, Bt("112233445566", "Pixel 8", 66)]).Count == 2);
         check("Phone Link: a model suffix is the same phone",
             DeviceRoster.Merge([linked, Bt("AABBCCDDEEFF", "Xiaomi 13 Ultra 5G", 79)]).Count == 1);
+        check("Phone Link: a model of its own is another phone",
+            DeviceRoster.Merge([Link(70, "Pixel 8"), Bt("112233445566", "Pixel 8 Pro", 66)]).Count == 2);
         check("Phone Link: other Bluetooth devices are untouched",
             DeviceRoster.Merge([linked, Bt("001122334455", "MX Master 3S", 55, DeviceKind.Mouse)]).Count == 2);
 
@@ -38,6 +42,9 @@ static class PhoneLinkMergeTests
         check("Phone Link: names match across case, spaces and a suffix",
             Devices.SamePhone("Xiaomi 13 Ultra", "XIAOMI 13 ultra") && Devices.SamePhone("Xiaomi 13 Ultra", "Xiaomi 13 Ultra 5G")
             && !Devices.SamePhone("Pixel 8", "iPhone 15") && !Devices.SamePhone("", "Pixel 8") && !Devices.SamePhone(null, null));
+        check("Phone Link: a longer model is not the same phone",
+            !Devices.SamePhone("Pixel 8", "Pixel 8 Pro") && !Devices.SamePhone("iPhone 15", "iPhone 15 Pro")
+            && !Devices.SamePhone("Galaxy S23", "Galaxy S23 Ultra"));
         check("Phone Link: its source is named and has no read switch",
             Devices.SourceName(DeviceSource.PhoneLink).Length > 0 && !DeviceLists.ReadSwitchable(DeviceSource.PhoneLink));
     }

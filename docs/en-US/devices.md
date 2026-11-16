@@ -9,7 +9,7 @@ BrimDeck only reads batteries: it never pairs, disconnects or changes any device
 | Connection | How it is read | Notes |
 | --- | --- | --- |
 | Bluetooth | The battery Windows itself reads, as Windows Settings › Bluetooth & devices shows it; a Bluetooth LE device's own battery service is read as well | Only connected devices are listed |
-| Phone | The Start card Phone Link saves on this PC, for the level and the charging state; when Phone Link is not running or the card is more than 2 hours old, Bluetooth stands in | The card is only read, never fetched online through Phone Link; a phone is listed only with a level |
+| Phone | The Start card Phone Link saves on this PC, for the level and the charging state; the card is taken as it stands for 30 minutes, then only while Phone Link is running, and Bluetooth stands in once it is 2 hours old or the card reports the phone away | The card is only read, never fetched online through Phone Link; a phone is listed only with a level |
 | AirPods, Beats | The Bluetooth advertisement the earbuds send while out of the case or with its lid open | Each bud and the case |
 | 2.4 GHz receiver or cable | Each brand's own protocol | See the brands below |
 | Game controllers | Windows' game controller interface, and some brands' own protocols | See the brands below |

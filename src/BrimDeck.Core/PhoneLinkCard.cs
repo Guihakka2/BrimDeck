@@ -31,6 +31,11 @@ public static class PhoneLinkCard
         "短信", "messages", "呼叫", "call", "照片", "photos", "发送文件", "send files", "最近", "recent", "功能", "features",
         "连接", "connect", "不可用", "unavailable"
     ];
+    // The same words ready to match: English ones as whole words, so "call" is not found inside "Callie's" and "open" is
+    // found only as a word of its own; Chinese ones as they stand, a run of characters without word breaks.
+    private static readonly Regex InterfaceWords = new(@"\b(" + string.Join("|",
+        Interface.Where(word => word.All(c => c <= '\u007f')).Select(Regex.Escape)) + @")\b", RegexOptions.CultureInvariant);
+    private static readonly string[] InterfaceCjk = Interface.Where(word => word.Any(c => c > '\u007f')).ToArray();
     private static readonly Regex PercentText = new(@"^\s*(\d{1,3})\s*%\s*$", RegexOptions.CultureInvariant);
     private static readonly string[] NotCharging = ["discharging", "not charging", "未充电", "未充電", "不充电", "没有充电", "放电", "放電"];
     private static readonly string[] ChargingWords = ["charging", "正在充电", "正在充電", "充电中", "充電中", "已接通电源", "已接通電源"];
@@ -121,9 +126,25 @@ public static class PhoneLinkCard
     {
         if (text.Length is < 2 or > 60 || Percent(text) is not null) return false;
         var lower = text.ToLowerInvariant();
-        if (Interface.Any(word => lower.Contains(word, StringComparison.Ordinal))) return false;
+        // What the phone is doing is said in words of its own ("正在充电", "discharging"), which are never its name.
+        if (ChargingWords.Any(word => lower.Contains(word, StringComparison.Ordinal))
+            || NotCharging.Any(word => lower.Contains(word, StringComparison.Ordinal))) return false;
+        if (InterfaceText(lower)) return false;
         if (text.EndsWith('。') || text.EndsWith('.') || text.EndsWith('!') || text.EndsWith('！')) return false;
         foreach (var c in text) if (char.IsLetterOrDigit(c)) return true;
         return false;
+    }
+
+    // Whether the text is the card speaking rather than naming the phone: the words of the interface make up half of it or
+    // more. A name that happens to carry one of them stays a name — "OnePlus Open" is a phone, "Open settings" is not.
+    private static bool InterfaceText(string lower)
+    {
+        int letters = 0;
+        foreach (var c in lower) if (char.IsLetterOrDigit(c)) letters++;
+        int claimed = 0;
+        foreach (var word in InterfaceCjk)
+            if (lower.Contains(word, StringComparison.Ordinal)) claimed += word.Length;
+        foreach (Match match in InterfaceWords.Matches(lower)) claimed += match.Length;
+        return claimed > 0 && claimed * 2 >= letters;
     }
 }

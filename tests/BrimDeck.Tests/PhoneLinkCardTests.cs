@@ -30,6 +30,16 @@ static class PhoneLinkCardTests
         check("Phone Link card: interface text is never the name",
             PhoneLinkCard.Parse(Card(Text("短信"), Text("打开“手机连接”以重新连接移动设备"), Text("电池状态不可用"), Text("58%"))) is { Percent: 58 }
             && PhoneLinkCard.Parse(Card(Text("短信"), Text("58%"))) is { Name.Length: > 0 } unnamed && unnamed.Name != "短信");
+        check("Phone Link card: what the phone is doing is never the name",
+            PhoneLinkCard.Parse(Card(Text("83%"), Tip("正在充电"))) is { Percent: 83 } chargingOnly
+            && chargingOnly.Name != "正在充电" && chargingOnly.Name != "charging");
+        check("Phone Link card: a label with a figure is never the name",
+            PhoneLinkCard.Parse(Card(Text("电池 - 83%"), Text("61%"))) is { Percent: 61 } labelled
+            && !labelled.Name.Contains("电池", StringComparison.Ordinal));
+        check("Phone Link card: a name that carries a word of the interface",
+            PhoneLinkCard.Parse(Card(Text("Callie's iPhone"), Text("77%"))) is { Name: "Callie's iPhone", Percent: 77 });
+        check("Phone Link card: a phone whose model is a word of the interface",
+            PhoneLinkCard.Parse(Card(Speak("OnePlus Open - connected to your PC"), Text("63%"))) is { Name: "OnePlus Open", Percent: 63 });
 
         check("Phone Link card: a disconnected card has no reading",
             PhoneLinkCard.Parse(Card(Speak("Xiaomi 13 Ultra - 已从电脑断开连接"), Tip("电池状态不可用"))) is null);

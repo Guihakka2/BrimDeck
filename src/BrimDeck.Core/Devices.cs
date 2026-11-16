@@ -266,15 +266,20 @@ public static class Devices
         return runs.Count > 0 ? runs[^1].Groups[1].Value.ToUpperInvariant() : null;
     }
 
+    // Suspensions of a phone's Bluetooth name that still name the same phone: "Xiaomi 13 Ultra 5G" is the "Xiaomi 13
+    // Ultra" Phone Link shows. Anything else after the shorter name is a different model ("Pixel 8" and "Pixel 8 Pro").
+    private static readonly string[] PhoneSuffixes = ["5g", "4g", "lte", "5ge", "nr", "dualsim", "双卡", "双卡双待"];
+
     // Whether two names are the same phone: letters and digits only, in lower case, then equal, or one the start of the
-    // other (Phone Link and the Bluetooth name may differ by a model suffix).
+    // other followed only by the way a phone names its link (Phone Link and Bluetooth may differ by that).
     public static bool SamePhone(string? a, string? b)
     {
         var left = PhoneName(a); var right = PhoneName(b);
         if (left.Length == 0 || right.Length == 0) return false;
         if (left == right) return true;
         var (shorter, longer) = left.Length <= right.Length ? (left, right) : (right, left);
-        return shorter.Length >= 6 && longer.StartsWith(shorter, StringComparison.Ordinal);
+        return shorter.Length >= 6 && longer.StartsWith(shorter, StringComparison.Ordinal)
+            && PhoneSuffixes.Contains(longer[shorter.Length..], StringComparer.Ordinal);
     }
     private static string PhoneName(string? name)
     {
@@ -317,12 +322,27 @@ public sealed class DeviceRoster
     {
         var list = devices.ToList();
         // Phone Link is the primary reading for a phone: while it reports one, the Bluetooth entry of that phone is left
-        // out, so the page shows one phone with the fresher reading and its charging state. With no Phone Link reading
-        // (the app closed, the phone away) the Bluetooth entry stands in unchanged; a phone it does not name is kept.
+        // out, so the page shows one phone with the fresher reading and its charging state. Its address goes to the Phone
+        // Link entry first, so the merged key stays "bt:<address>" and the name, colors and hidden state the settings
+        // remember still find the phone. With no Phone Link reading (the app closed, the phone away) the Bluetooth entry
+        // stands in unchanged; a phone it does not name is kept.
         var linked = list.Where(device => device.Source == DeviceSource.PhoneLink && device.Kind == DeviceKind.Phone).ToList();
         if (linked.Count > 0)
-            list = list.Where(device => device.Source != DeviceSource.Bluetooth || device.Kind != DeviceKind.Phone
-                || !linked.Any(phone => Devices.SamePhone(phone.Name, device.Name))).ToList();
+        {
+            var dropped = new HashSet<DeviceBattery>(ReferenceEqualityComparer.Instance);
+            var carries = new Dictionary<DeviceBattery, string>(ReferenceEqualityComparer.Instance);
+            foreach (var phone in linked)
+            {
+                var bluetooth = list.FirstOrDefault(device => device.Source == DeviceSource.Bluetooth && device.Kind == DeviceKind.Phone
+                    && device.Address is not null && !dropped.Contains(device) && Devices.SamePhone(phone.Name, device.Name));
+                if (bluetooth is null) continue;
+                dropped.Add(bluetooth);
+                carries[phone] = bluetooth.Address!;
+            }
+            if (dropped.Count > 0)
+                list = list.Where(device => !dropped.Contains(device))
+                    .Select(device => carries.TryGetValue(device, out var address) ? device with { Address = address } : device).ToList();
+        }
         var parent = Enumerable.Range(0, list.Count).ToArray();
         int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
         void Join(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[b] = a; }
