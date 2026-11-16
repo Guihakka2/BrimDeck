@@ -13,7 +13,9 @@ namespace BrimDeck.Core.ClipboardSync;
 public sealed class WeTypeIdentity
 {
     public string DeviceName { get; set; } = "BrimDeck " + Environment.MachineName;
+    // This device's name as the paired devices show it; another device may have renamed it.
     public string DisplayName { get; set; } = "";
+    public List<string> PeerNames { get; set; } = [];
     public string PrivateKey { get; set; } = "";
     public string DeviceCode { get; set; } = CreateDeviceCode();
     public string Uuid { get; set; } = Guid.NewGuid().ToString();
@@ -27,6 +29,9 @@ public sealed class WeTypeIdentity
     }
 }
 
+// The server answered, and this device is no longer in a group with another one: a paired device removed it.
+public sealed class WeTypeUnpairedException() : IOException("WeType is not paired.");
+
 // Independently implemented control client. Wire fields and protocol constants were checked
 // against mkdir700/wx-ime-sdk; no external executable or SDK is loaded.
 public sealed class WeTypeSyncClient(WeTypeIdentity identity, Action save) : IClipboardSyncClient
@@ -34,6 +39,14 @@ public sealed class WeTypeSyncClient(WeTypeIdentity identity, Action save) : ICl
     private const string Version = "3.5.4.57423";
     private string Name => identity.DeviceName;
     private readonly HttpClient _http = SyncTransport.CreateHttp();
+    private readonly HttpClient _objects = SyncTransport.CreateHttp(60);
+    public bool SupportsImages => true;
+    // Says what the service answered, without any content, for the sync log.
+    public Action<string>? Trace { get; set; }
+    private string _listed = "";
+    // The other devices' lists show this one as a phone, and nothing in the requests changes that: the kind there (1; WeType
+    // for Windows has 6) follows the identity the requests are signed with, which is a phone's. Saying 6 in the pairing's
+    // description of the device, and then in every request, was accepted and left the list as it was (tried on 2026-11-16).
     private byte[]? _key;
     private long _offset;
     private uint _task = 1;
@@ -164,42 +177,103 @@ public sealed class WeTypeSyncClient(WeTypeIdentity identity, Action save) : ICl
     {
         var request = new WeTypeWire().Number(1, identity.Uin).Number(2, 1).Number(3, clipboard ? 3UL : 1UL);
         if (clipboard) request.Number(4, 0);
-        var response = await ApiAsync(34, request, ct); Success(response, 2);
+        var response = await ApiAsync(34, request, ct);
+        // 10020 with no group: this device is in no group any more (checked against wx-ime-sdk's session.rs).
+        if (response.GetNumber(2) == 10020 && !response.Has(1)) throw new WeTypeUnpairedException();
+        Success(response, 2);
         var group = response.GetMessage(1);
-        string display = group.Messages(2).FirstOrDefault(d => d.GetNumber(1) == identity.Uin)?.GetMessage(2).GetText(1) ?? "";
-        if (display.Length > 0 && identity.DisplayName != display) { identity.DisplayName = display; save(); }
-        _group = group.GetNumber(1); _members = group.Messages(2).Select(d => d.GetNumber(1)).ToHashSet();
-        if (_group == 0 || !_members.Contains(identity.Uin) || _members.Count < 2) throw new InvalidDataException("WeType is not paired.");
+        var devices = group.Messages(2).Select(d => (Uin: d.GetNumber(1), Name: d.GetMessage(2).GetText(1))).ToList();
+        _group = group.GetNumber(1); _members = devices.Select(d => d.Uin).ToHashSet();
+        if (_group == 0 || !_members.Contains(identity.Uin) || _members.Count < 2) throw new WeTypeUnpairedException();
+        if (Trace is { } trace)
+        {
+            string listed = string.Join("; ", group.Messages(2).Select(d => (d.GetNumber(1) == identity.Uin ? "self " : "") + "\"" + d.GetMessage(2).GetText(1) + "\" platform=" +
+                d.GetMessage(2).GetNumber(2) + " version=" + d.GetMessage(2).GetText(4)));
+            if (listed != _listed) { _listed = listed; trace("wetype devices: " + listed); }
+        }
+        string display = devices.First(d => d.Uin == identity.Uin).Name;
+        var peers = devices.Where(d => d.Uin != identity.Uin && d.Name.Length > 0).Select(d => d.Name).ToList();
+        if (display.Length > 0 && identity.DisplayName != display || !identity.PeerNames.SequenceEqual(peers))
+        {
+            if (display.Length > 0) identity.DisplayName = display;
+            identity.PeerNames = peers; save();
+        }
         return group;
     }
-    public async Task<(string Name, string OriginalName, string Remark)> ReadOwnNamesAsync(CancellationToken ct)
+    // Reads the names again: another device may have renamed this one, or joined or left.
+    public async Task RefreshNamesAsync(CancellationToken ct)
     {
         await InitializeAsync(ct);
-        var response = await ApiAsync(34, new WeTypeWire().Number(1, identity.Uin).Number(2, 1).Number(3, 1), ct);
-        Success(response, 2);
-        var own = response.GetMessage(1).Messages(2).FirstOrDefault(d => d.GetNumber(1) == identity.Uin)
-            ?? throw new InvalidDataException("Own device missing.");
-        return (own.GetMessage(2).GetText(1), own.GetMessage(2).GetText(6), response.GetText(3));
-    }
-    public async Task SendAsync(string text, CancellationToken ct)
-    {
-        var bytes = SyncTransport.TextBytes(text);
         await GroupAsync(ct);
+    }
+    public Task SendAsync(string text, CancellationToken ct) => PublishAsync(1, SyncTransport.TextBytes(text), ct);
+    public async Task SendImageAsync(byte[] image, int width, int height, CancellationToken ct)
+    {
+        if (image.Length == 0 || !SyncTransport.IsPicture(image)) throw new InvalidDataException("A PNG or JPEG picture is required.");
+        if (image.Length > SyncTransport.MaxImageBytes) throw new SyncImageTooLargeException();
+        await GroupAsync(ct);
+        ulong group = _group;
+        var place = await ApiAsync(60, new WeTypeWire().Number(1, 6).Text(2, "{\"log_fully_custom_path\":\"" + Stamp + "\"}").Number(3, 3), ct);
+        ulong limit = place.GetNumber(6);
+        if (limit == 0) throw new InvalidDataException("Missing upload limit.");
+        if ((ulong)image.Length > limit * 1024) throw new SyncImageTooLargeException();
+        var upload = WeTypeObjects.CheckUrl(place.GetText(5));
+        string download = place.GetText(4);
+        WeTypeObjects.CheckUrl(download);
+        byte[] key = RandomNumberGenerator.GetBytes(16);
+        using (var request = new HttpRequestMessage(HttpMethod.Put, upload) { Content = new ByteArrayContent(WeTypeObjects.Crypt(key, image)) })
+        {
+            request.Content.Headers.ContentType = new("application/octet-stream");
+            using var stored = await _objects.SendAsync(request, ct);
+            if ((int)stored.StatusCode is not (200 or 201 or 204)) throw new HttpRequestException("The image was not stored (" + (int)stored.StatusCode + ").");
+        }
+        await PublishAsync(6, WeTypeObjects.ImageReference(download, image, key), ct, group);
+    }
+    private async Task PublishAsync(uint kind, byte[] bytes, CancellationToken ct, ulong expected = 0)
+    {
+        await GroupAsync(ct);
+        if (expected != 0 && _group != expected) throw new InvalidDataException("The paired devices changed during the upload.");
         var response = await ApiAsync(36, new WeTypeWire().Number(1, identity.Uin).Number(2, 1).Number(4, _group)
-            .Message(3, new WeTypeWire().Number(2, 1).Bytes(6, bytes).Text(9, Guid.NewGuid().ToString("N"))), ct);
+            .Message(3, new WeTypeWire().Number(2, kind).Bytes(6, bytes).Text(9, Guid.NewGuid().ToString("N"))), ct);
         Success(response);
         if (response.GetNumber(2) == 0) throw new InvalidDataException("Missing send receipt.");
     }
-    public async Task<RemoteClip?> ReceiveAsync(CancellationToken ct)
+    private async Task<(string Id, WeTypeWire Clip)?> LatestAsync(CancellationToken ct)
     {
         var group = await GroupAsync(ct, true); var clip = group.GetMessage(3);
         ulong sender = clip.GetNumber(7), version = clip.GetNumber(1), expiry = clip.GetNumber(4);
         if (version == 0 || sender == identity.Uin || expiry != 0 && expiry <= (ulong)(Stamp / 1000)) return null;
         if (!_members.Contains(sender)) throw new InvalidDataException("Unknown clipboard sender.");
-        if (clip.GetNumber(2) != 1) return null; // Text only; images and remote objects are not downloaded.
+        return ($"{_group}:{version}", clip);
+    }
+    public async Task<string?> PeekAsync(CancellationToken ct) => (await LatestAsync(ct))?.Id;
+    public async Task<RemoteClip?> ReceiveAsync(string? known, CancellationToken ct)
+    {
+        if (await LatestAsync(ct) is not var (id, clip) || id == known) return null;
         var bytes = clip.GetBytes(6);
-        if (bytes.Length is 0 or > SyncTransport.MaxTextBytes) return null;
-        return new RemoteClip($"{_group}:{version}", SyncTransport.Utf8.GetString(bytes));
+        if (bytes.Length == 0) return null;
+        // 1: text. 2: long text stored as an object. 6: a picture stored as an encrypted object. Other kinds are not synced.
+        switch (clip.GetNumber(2))
+        {
+            case 1:
+                return bytes.Length > SyncTransport.MaxRemoteTextBytes ? null : new RemoteClip(id, SyncTransport.Utf8.GetString(bytes));
+            case 2:
+                var text = await ObjectAsync(WeTypeObjects.CheckUrl(SyncTransport.Utf8.GetString(bytes)), SyncTransport.MaxRemoteTextBytes, ct);
+                return new RemoteClip(id, SyncTransport.Utf8.GetString(text));
+            case 6:
+                var (url, md5, key) = WeTypeObjects.ParseImageReference(bytes);
+                var picture = WeTypeObjects.OpenImage(await ObjectAsync(url, SyncTransport.MaxImageBytes, ct), md5, key);
+                if (!SyncTransport.IsPicture(picture)) throw new InvalidDataException("Unsupported image format.");
+                return new RemoteClip(id, "", picture);
+            default:
+                return null;
+        }
+    }
+    private async Task<byte[]> ObjectAsync(Uri url, int limit, CancellationToken ct)
+    {
+        using var response = await _objects.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        var bytes = await SyncTransport.ReadAsync(response, ct, limit);
+        return bytes.Length == 0 ? throw new InvalidDataException("Empty object.") : bytes;
     }
     private async Task<WeTypeWire> ApiAsync(uint command, WeTypeWire body, CancellationToken ct)
     {
@@ -243,5 +317,5 @@ public sealed class WeTypeSyncClient(WeTypeIdentity identity, Action save) : ICl
         else if (compression is not ("1" or null or "")) throw new InvalidDataException("Unsupported packet compression.");
         return WeTypeWire.Parse(bytes);
     }
-    public void Dispose() { _http.Dispose(); if (_key is not null) CryptographicOperations.ZeroMemory(_key); }
+    public void Dispose() { _http.Dispose(); _objects.Dispose(); if (_key is not null) CryptographicOperations.ZeroMemory(_key); }
 }

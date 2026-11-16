@@ -57,6 +57,7 @@ internal static class Program
     internal static void SetField(object target, string name, object? value) => target.GetType().GetField(name, Any)!.SetValue(target, value);
     internal static object? Call(object target, string name, Type[] types, params object?[] args)
         => (target.GetType().GetMethod(name, Any, types) ?? throw new MissingMethodException(target.GetType().Name, name)).Invoke(target, args);
+    internal static object? GetProperty(object target, string name) => target.GetType().GetProperty(name, Any)!.GetValue(target);
     internal static void SetProperty(object target, string name, object? value) => target.GetType().GetProperty(name, Any)!.SetValue(target, value);
 }
 
@@ -170,6 +171,8 @@ internal sealed class Renderer(App app, string output, string language, string[]
             if (scenes.Contains("shelf-views")) await ShelfViews();
             // What the pictures do not show, measured: see ShelfMeasures.
             if (scenes.Contains("shelf-measures")) await ShelfMeasures();
+            // The clipboard sync page and its connecting windows in each state; for checking, not for the README.
+            if (scenes.Contains("clipboard-sync")) await ClipboardSyncScene(folder);
         }
         finally { Directory.Delete(folder, true); }
     }
@@ -1263,6 +1266,157 @@ internal sealed class Renderer(App app, string output, string language, string[]
         _settings.ShelfClipView = ClipView.Single; _settings.ShelfFileView = FileView.Two;
         SelectPage(DeckPage.Usage);
         _deck.SetExpanded(false, true);
+    }
+
+    // The sync page not connected and connected, then the content of each connecting window. Nothing is connected: the service
+    // is made on this run's empty folder and never applied, and the names it would read from WeType are set here.
+    private async Task ClipboardSyncScene(string folder)
+    {
+        var service = Activator.CreateInstance(Type.GetType("BrimDeck.ClipboardSyncService, BrimDeck")!, Program.Any, null, [app, folder], null)!;
+        Program.SetProperty(app, "ClipboardSync", service);
+        // A worker listed as running keeps the page from asking WeType for the names.
+        var workers = (System.Collections.IDictionary)Program.Field(service, "_workers")!;
+        workers[false] = new CancellationTokenSource();
+        var accounts = Program.GetProperty(service, "Accounts")!;
+        Program.SetProperty(accounts, "DeviceName", _english ? "BrimDeck STUDIO-PC" : "BrimDeck 书房电脑");
+        // As SettingsPage, without closing the window: closing saves the settings, which this run has none to save.
+        async Task Page(string name, double height)
+        {
+            const double scale = 1.5, width = 960;
+            _settings.Theme = SettingsTheme.Dark;
+            var page = new SettingsWindow(app);
+            page.ShowPage(18);
+            var root = page.RootVisual;
+            var resources = page.Resources;
+            page.Content = null;
+            root.Resources = resources;
+            TextOptions.SetTextFormattingMode(root, TextFormattingMode.Ideal);
+            root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height));
+            await Settle();
+            root.UpdateLayout();
+            var bitmap = new RenderTargetBitmap((int)(width * scale), (int)(height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            bitmap.Render(root); bitmap.Freeze();
+            Write(bitmap, Path.Combine(output, name + ".png"));
+            Console.WriteLine(name);
+        }
+        await Page("sync-page-empty", 560);
+
+        var statuses = (System.Collections.IDictionary)Program.Field(service, "_status")!;
+        var levels = Type.GetType("BrimDeck.SyncLevel, BrimDeck")!;
+        object Status(string text, string level) => Activator.CreateInstance(statuses.GetType().GetGenericArguments()[1], text, Enum.Parse(levels, level))!;
+        Program.SetProperty(accounts, "Lan", new BrimDeck.Core.ClipboardSync.LanClipboardPeer("192.168.1.20", 50000, new byte[32], new byte[32], null) { DeviceName = "BrimDeck LAPTOP-7QK2M4" });
+        var wetype = (BrimDeck.Core.ClipboardSync.WeTypeIdentity)Program.GetProperty(accounts, "WeType")!;
+        wetype.Paired = true; wetype.DisplayName = _english ? "Study desktop" : "书房的台式机";
+        wetype.PeerNames = ["iPhone 15 Pro", "DESKTOP-OFFICE-WORKSTATION-2026", _english ? "Living room tablet" : "客厅平板"];
+        Program.SetProperty(accounts, "Doubao", new BrimDeck.Core.ClipboardSync.DoubaoIdentity { DeviceId = "1", Cookies = { ["sessionid"] = "x" } });
+        Program.SetProperty(service, "DoubaoCapability", new BrimDeck.Core.ClipboardSync.DoubaoDeviceState(2, true));
+        _settings.LanClipboardSync = _settings.WeTypeClipboardSync = _settings.DoubaoClipboardSync = true;
+        Program.SetProperty(service, "LanStatus", _english ? "Connected" : "已连接");
+        Program.SetProperty(service, "LanLevel", Enum.Parse(levels, "Active"));
+        statuses[false] = Status(_english ? "Image received · 14:02:31" : "已接收图片 · 14:02:31", "Active");
+        statuses[true] = Status(_english ? "Sync is turned off for this device" : "此设备的互传开关未开启", "Attention");
+        await Page("sync-page-connected", 700);
+        _settings.WeTypeClipboardSync = false;
+        Program.SetProperty(service, "DoubaoCapability", new BrimDeck.Core.ClipboardSync.DoubaoDeviceState(1, true));
+        statuses[true] = Status(_english ? "Connection lost. Retrying…" : "连接中断，正在重试…", "Attention");
+        Program.SetProperty(service, "LanStatus", _english ? "Waiting for the other PC…" : "正在等待另一台电脑…");
+        Program.SetProperty(service, "LanLevel", Enum.Parse(levels, "Idle"));
+        await Page("sync-page-paused", 700);
+
+        _settings.Theme = SettingsTheme.Dark;
+        var window = new SettingsWindow(app);
+        window.ShowPage(18);
+        object View(string name) => Program.Call(window, name, [])!;
+        T Part<T>(object view, string name) => (T)view.GetType().GetProperty(name)!.GetValue(view)!;
+        void Say(object status, string text, bool error = false) => Program.Call(window, "SetSyncStatus", [typeof(System.Windows.Controls.TextBlock), typeof(string), typeof(bool)], status, text, error);
+        void Code(object box, string text) => box.GetType().GetProperty("Text")!.SetValue(box, text);
+        async Task Dialog(string name, string title, params FrameworkElement[] parts)
+        {
+            var body = new System.Windows.Controls.StackPanel();
+            foreach (var part in parts) body.Children.Add(part);
+            var frame = (FrameworkElement)Program.Call(window, "SyncDialogFrame", [typeof(string), typeof(System.Windows.Controls.StackPanel), typeof(Action)], title, body, (Action)(() => { }))!;
+            const double scale = 1.5, width = 420;
+            var host = new System.Windows.Controls.Border { Child = frame, Resources = window.Resources, Width = width };
+            System.Windows.Documents.TextElement.SetFontFamily(host, window.FontFamily);
+            TextOptions.SetTextFormattingMode(host, TextFormattingMode.Ideal);
+            host.Measure(new Size(width, double.PositiveInfinity)); host.Arrange(new Rect(host.DesiredSize));
+            await Settle();
+            host.UpdateLayout();
+            var bitmap = new RenderTargetBitmap((int)(width * scale), (int)Math.Ceiling(host.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            bitmap.Render(host); bitmap.Freeze();
+            Write(bitmap, Path.Combine(output, name + ".png"));
+            Console.WriteLine(name + " " + host.ActualHeight.ToString("0"));
+            host.Child = null;
+        }
+        FrameworkElement Modes(bool second)
+        {
+            var modes = (FrameworkElement)Program.Call(window, "SyncModes", [typeof(string), typeof(string), typeof(Action<bool>)],
+                _english ? "Enter a code" : "输入匹配码", _english ? "Show this device's code" : "显示本机匹配码", (Action<bool>)(_ => { }))!;
+            if (second) foreach (var option in Descendants<System.Windows.Controls.RadioButton>(modes).Skip(1)) option.IsChecked = true;
+            return modes;
+        }
+        FrameworkElement Footnote() => (FrameworkElement)Program.Call(window, "WeTypeFootnote", [])!;
+        string wetypeTitle = _english ? "Link WeType" : "关联微信输入法";
+
+        var enter = View("WeTypeEnterView");
+        await Dialog("sync-wetype-enter", wetypeTitle, Modes(false), Part<FrameworkElement>(enter, "Root"), Footnote());
+        enter = View("WeTypeEnterView");
+        Code(Part<object>(enter, "Code"), "4071");
+        Say(Part<object>(enter, "Status"), _english ? "The code is wrong or has expired." : "匹配码不正确或已过期。", true);
+        await Dialog("sync-wetype-enter-error", wetypeTitle, Modes(false), Part<FrameworkElement>(enter, "Root"), Footnote());
+        var show = View("WeTypeShowView");
+        Code(Part<object>(show, "Code"), "407193");
+        Say(Part<object>(show, "Status"), _english ? "Valid for 42 s" : "42 秒内有效");
+        await Dialog("sync-wetype-show", wetypeTitle, Modes(true), Part<FrameworkElement>(show, "Root"), Footnote());
+        show = View("WeTypeShowView");
+        Code(Part<object>(show, "Code"), "407193");
+        Say(Part<object>(show, "Status"), _english ? "“DESKTOP-OFFICE-WORKSTATION-2026” asks to link" : "“DESKTOP-OFFICE-WORKSTATION-2026”请求关联");
+        var allow = Part<System.Windows.Controls.Button>(show, "Action"); allow.Content = _english ? "Allow" : "允许"; allow.Visibility = Visibility.Visible;
+        await Dialog("sync-wetype-allow", wetypeTitle, Modes(true), Part<FrameworkElement>(show, "Root"), Footnote());
+
+        object?[] login = [null, null];
+        var doubao = (FrameworkElement)window.GetType().GetMethod("DoubaoLoginView", Program.Any)!.Invoke(window, login)!;
+        Say(login[0]!, _english ? "Waiting for you to sign in…" : "正在等待登录…");
+        await Dialog("sync-doubao-waiting", _english ? "Sign in to Doubao" : "登录豆包", doubao);
+        doubao = (FrameworkElement)window.GetType().GetMethod("DoubaoLoginView", Program.Any)!.Invoke(window, login)!;
+        Say(login[0]!, _english ? "The sign-in window was closed." : "登录窗口已关闭。", true);
+        ((UIElement)login[1]!).Visibility = Visibility.Visible;
+        await Dialog("sync-doubao-retry", _english ? "Sign in to Doubao" : "登录豆包", doubao);
+
+        var advanced = Program.Call(window, "DoubaoAdvanced", [])!;
+        var listed = Part<System.Windows.Controls.StackPanel>(advanced, "List"); listed.Visibility = Visibility.Visible;
+        Program.Call(window, "ShowDoubaoDevices", [typeof(System.Windows.Controls.StackPanel), typeof(IReadOnlyList<BrimDeck.Core.ClipboardSync.DoubaoDevice>)], listed,
+            (IReadOnlyList<BrimDeck.Core.ClipboardSync.DoubaoDevice>)[new("1", "DESKTOP-BFFEHMI", false), new("2", "BrimDeck DESKTOP-G72GT45-OFFICE-WORKSTATION-2026-LONG-NAME", false),
+                new("3", "Oppo Find X9 Pro", false), new("4", "MacBook Air (15-inch, M5)", false)]);
+        await Dialog("sync-doubao-advanced", _english ? "Doubao IME" : "豆包输入法", Part<FrameworkElement>(advanced, "Root"));
+
+        string lanTitle = _english ? "Pair another PC" : "配对另一台电脑";
+        var lan = View("LanPairView");
+        Code(Part<object>(lan, "Own"), "582046");
+        await Dialog("sync-lan", lanTitle, Part<FrameworkElement>(lan, "Root"));
+        lan = View("LanPairView");
+        Code(Part<object>(lan, "Own"), "582046"); Code(Part<object>(lan, "Entry"), "913");
+        Say(Part<object>(lan, "Status"), _english ? "The other PC was not found. Make sure it has this window open and both PCs are on the same network."
+            : "没有找到另一台电脑。确认它也打开了这个窗口，并且两台电脑在同一网络。", true);
+        await Dialog("sync-lan-not-found", lanTitle, Part<FrameworkElement>(lan, "Root"));
+        lan = View("LanPairView");
+        Code(Part<object>(lan, "Entry"), "913377");
+        var note = Part<System.Windows.Controls.TextBlock>(lan, "OwnNote"); note.Text = _english ? "This PC is not on a local network" : "本机没有连接到局域网"; note.Visibility = Visibility.Visible;
+        Say(Part<object>(lan, "Status"), _english ? "Several PCs were found. Choose the one to pair:" : "找到多台电脑，选择要配对的一台：");
+        var devices = Part<System.Windows.Controls.StackPanel>(lan, "Devices"); devices.Visibility = Visibility.Visible;
+        foreach (string device in new[] { "BrimDeck LAPTOP-7QK2M4 · 192.168.1.20", "BrimDeck DESKTOP-OFFICE-WORKSTATION-2026 · 192.168.1.131" })
+            devices.Children.Add(new System.Windows.Controls.Button { Content = device, Style = (Style)window.FindResource("SettingsOutlineButton"),
+                HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) });
+        await Dialog("sync-lan-choose", lanTitle, Part<FrameworkElement>(lan, "Root"));
+    }
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is T match) yield return match;
+            foreach (var deeper in Descendants<T>(child)) yield return deeper;
+        }
     }
 
     private async Task SettingsPage(string name, int page, double height = 640)
