@@ -10,7 +10,7 @@ public enum DeviceKind { Mouse, Keyboard, Headphones, Earbuds, Controller, Pen, 
 
 // Where a reading comes from, roughly from the most to the least exact. A device seen by more than one source keeps the
 // reading of the first in this order that has a percentage (DeviceRoster.Merge).
-public enum DeviceSource { Logitech, Razer, SteelSeries, HyperX, Sony, Apple, Gatt, Gaming, Hid, Bluetooth }
+public enum DeviceSource { PhoneLink, Logitech, Razer, SteelSeries, HyperX, Sony, Apple, Gatt, Gaming, Hid, Bluetooth }
 
 // The parts of earbuds that report their own charge.
 public enum BatteryPart { Left, Right, Case }
@@ -212,6 +212,7 @@ public static class Devices
 
     public static string SourceName(DeviceSource source) => source switch
     {
+        DeviceSource.PhoneLink => Loc.T("手机连接", "Phone Link"),
         DeviceSource.Logitech => Loc.T("罗技接收器", "Logitech receiver"), DeviceSource.Razer => "Razer", DeviceSource.SteelSeries => "SteelSeries",
         DeviceSource.HyperX => "HyperX", DeviceSource.Sony => "PlayStation", DeviceSource.Gatt => Loc.T("蓝牙电池服务", "Bluetooth battery service"),
         DeviceSource.Gaming => Loc.T("游戏控制器", "Game controller"), DeviceSource.Hid => Loc.T("HID 电量", "HID battery"), DeviceSource.Apple => Loc.T("Apple 广播", "Apple broadcast"),
@@ -264,6 +265,24 @@ public static class Devices
         var runs = System.Text.RegularExpressions.Regex.Matches(id, @"(?<=[_&\\])([0-9A-Fa-f]{12})(?![0-9A-Fa-f])");
         return runs.Count > 0 ? runs[^1].Groups[1].Value.ToUpperInvariant() : null;
     }
+
+    // Whether two names are the same phone: letters and digits only, in lower case, then equal, or one the start of the
+    // other (Phone Link and the Bluetooth name may differ by a model suffix).
+    public static bool SamePhone(string? a, string? b)
+    {
+        var left = PhoneName(a); var right = PhoneName(b);
+        if (left.Length == 0 || right.Length == 0) return false;
+        if (left == right) return true;
+        var (shorter, longer) = left.Length <= right.Length ? (left, right) : (right, left);
+        return shorter.Length >= 6 && longer.StartsWith(shorter, StringComparison.Ordinal);
+    }
+    private static string PhoneName(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        var builder = new System.Text.StringBuilder(name.Length);
+        foreach (var c in name) if (char.IsLetterOrDigit(c)) builder.Append(char.ToLowerInvariant(c));
+        return builder.ToString();
+    }
 }
 
 // The devices of every source as one list. Each source hands over its whole current list (Set); entries of several sources
@@ -297,6 +316,13 @@ public sealed class DeviceRoster
     public static List<DeviceBattery> Merge(IEnumerable<DeviceBattery> devices)
     {
         var list = devices.ToList();
+        // Phone Link is the primary reading for a phone: while it reports one, the Bluetooth entry of that phone is left
+        // out, so the page shows one phone with the fresher reading and its charging state. With no Phone Link reading
+        // (the app closed, the phone away) the Bluetooth entry stands in unchanged; a phone it does not name is kept.
+        var linked = list.Where(device => device.Source == DeviceSource.PhoneLink && device.Kind == DeviceKind.Phone).ToList();
+        if (linked.Count > 0)
+            list = list.Where(device => device.Source != DeviceSource.Bluetooth || device.Kind != DeviceKind.Phone
+                || !linked.Any(phone => Devices.SamePhone(phone.Name, device.Name))).ToList();
         var parent = Enumerable.Range(0, list.Count).ToArray();
         int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
         void Join(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[b] = a; }

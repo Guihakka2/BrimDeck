@@ -1,0 +1,44 @@
+using BrimDeck.Core;
+
+// Phone Link first, Bluetooth as the fallback: what the merged list shows while Phone Link reports the phone, while it
+// stops (the app closed, the phone away), and which Bluetooth entries survive.
+static class PhoneLinkMergeTests
+{
+    private static DeviceBattery Link(int percent, string name = "Xiaomi 13 Ultra", bool charging = false)
+        => new("phonelink:" + name.Replace(" ", "", StringComparison.Ordinal).ToLowerInvariant(), name, DeviceKind.Phone, DeviceSource.PhoneLink, percent) { Charging = charging };
+    private static DeviceBattery Bt(string address, string name, int? percent, DeviceKind kind = DeviceKind.Phone)
+        => new("bt:" + address, name, kind, DeviceSource.Bluetooth, percent) { Address = address };
+
+    public static void Run(Action<string, bool> check)
+    {
+        var linked = Link(87, charging: true);
+        var bluetooth = Bt("AABBCCDDEEFF", "Xiaomi 13 Ultra", 80);
+        var merged = DeviceRoster.Merge([linked, bluetooth]);
+        check("Phone Link: the primary reading replaces the same phone on Bluetooth",
+            merged.Count == 1 && merged[0].Source == DeviceSource.PhoneLink && merged[0].Percent == 87 && merged[0].Charging);
+
+        check("Phone Link: without it the Bluetooth phone stands in",
+            DeviceRoster.Merge([bluetooth]) is { Count: 1 } only && only[0].Source == DeviceSource.Bluetooth && only[0].Percent == 80);
+        check("Phone Link: a phone it does not name keeps its Bluetooth entry",
+            DeviceRoster.Merge([linked, Bt("112233445566", "Pixel 8", 66)]).Count == 2);
+        check("Phone Link: a model suffix is the same phone",
+            DeviceRoster.Merge([linked, Bt("AABBCCDDEEFF", "Xiaomi 13 Ultra 5G", 79)]).Count == 1);
+        check("Phone Link: other Bluetooth devices are untouched",
+            DeviceRoster.Merge([linked, Bt("001122334455", "MX Master 3S", 55, DeviceKind.Mouse)]).Count == 2);
+
+        // The whole way: the Bluetooth source lists the phone, Phone Link takes over, and gives it back when it stops.
+        var roster = new DeviceRoster();
+        roster.Set(DeviceSource.Bluetooth, [bluetooth]);
+        check("Phone Link: Bluetooth alone lists the phone", roster.All is { Count: 1 } one && one[0].Source == DeviceSource.Bluetooth);
+        roster.Set(DeviceSource.PhoneLink, [linked]);
+        check("Phone Link: its reading takes the page over", roster.All is { Count: 1 } two && two[0].Source == DeviceSource.PhoneLink);
+        roster.Set(DeviceSource.PhoneLink, []);
+        check("Phone Link: closed, the Bluetooth entry returns", roster.All is { Count: 1 } three && three[0].Source == DeviceSource.Bluetooth);
+
+        check("Phone Link: names match across case, spaces and a suffix",
+            Devices.SamePhone("Xiaomi 13 Ultra", "XIAOMI 13 ultra") && Devices.SamePhone("Xiaomi 13 Ultra", "Xiaomi 13 Ultra 5G")
+            && !Devices.SamePhone("Pixel 8", "iPhone 15") && !Devices.SamePhone("", "Pixel 8") && !Devices.SamePhone(null, null));
+        check("Phone Link: its source is named and has no read switch",
+            Devices.SourceName(DeviceSource.PhoneLink).Length > 0 && !DeviceLists.ReadSwitchable(DeviceSource.PhoneLink));
+    }
+}
