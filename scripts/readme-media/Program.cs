@@ -164,6 +164,8 @@ internal sealed class Renderer(App app, string output, string language, string[]
             if (scenes.Contains("settings")) await SettingsPage("settings", 3);
             // The music page at its presets and at the ends of its size range; for checking layout changes, not for the README.
             if (scenes.Contains("music-sizes")) await MusicSizes();
+            // The stacked layout centred without the cover: a title that fits and one that does not, beside few and many bars.
+            if (scenes.Contains("music-centred")) await MusicCentred();
             // The clipboard page side by side and stacked, at three sizes, and the stacked cards trading places; for checking, not for the README.
             if (scenes.Contains("shelf-settings-stacked")) { _settings.ShelfArrangement = ShelfArrangement.Stacked; await SettingsPage("shelf-layout-settings-stacked", 17); }
             if (scenes.Contains("shelf-layout")) { await ShelfLayouts(); await SettingsPage("shelf-layout-settings", 17); }
@@ -921,6 +923,97 @@ internal sealed class Renderer(App app, string output, string language, string[]
         SelectPage(DeckPage.Usage);
     }
 
+    private async Task MusicCentred()
+    {
+        var update = new[] { typeof(MediaTrack), typeof(IReadOnlyList<MediaTrack>), typeof(BitmapSource), typeof(bool) };
+        const string longTitle = "Lift Me Up (From Black Panther: Wakanda Forever - Music From and Inspired By) 一段很长的标题";
+        void Play(string name, string title)
+        {
+            var track = _track with { Id = "demo:centred-" + name, Title = title };
+            Program.Call(_deck, "ApplyMediaUpdate", update, track, new List<MediaTrack> { track }, _cover, false);
+        }
+        async Task Sizes(string name, params (double Width, double Height)[] sizes)
+        {
+            foreach (var (width, height) in sizes)
+            {
+                _settings.MusicWidth = width; _settings.MusicHeight = height; Refresh();
+                await Save($"{name}-{width}x{height}", 1.5);
+            }
+        }
+        // Each picture is of the page at rest, not part of the way into the one before.
+        _settings.Animations = false;
+        SelectPage(DeckPage.Music);
+        _deck.SetExpanded(true, true);
+        // Centred without the cover: the title keeps clear of the bars and as far from the left.
+        _settings.MusicPageCover = false; _settings.MusicLyricsLayout = MusicLyricsLayout.Stacked; _settings.MusicLyricsAlign = MusicLyricsAlign.Center;
+        foreach (var (name, title) in new[] { ("short", _track.Title), ("long", longTitle) })
+        {
+            Play(name, title);
+            foreach (int bars in new[] { 3, 5, 20 })
+            {
+                _settings.MusicEqualizerBars = bars;
+                await Sizes($"music-centred-{name}-{bars}bars", (440, 140), (440, 200), (760, 300), (1200, 400));
+            }
+        }
+        // The same title as it scrolls: moved along by hand, with the fade at both ends.
+        _settings.MusicEqualizerBars = 20; _settings.MusicWidth = 650; _settings.MusicHeight = 290; Refresh();
+        await Settle(); Scrolled(); await Save("music-centred-long-20bars-scrolled-650x290", 1.5);
+        _settings.MusicEqualizerBars = 5;
+        // The lyrics switched off: the titles at the middle of the upper part, with the cover and without it.
+        _settings.LyricsEnabled = false;
+        foreach (var (name, title) in new[] { ("short", _track.Title), ("long", longTitle) })
+        {
+            Play(name, title);
+            _settings.MusicPageCover = true; _settings.MusicLyricsAlign = MusicLyricsAlign.Left;
+            await Sizes($"music-nolyrics-cover-{name}", (440, 140), (440, 200), (650, 290), (1200, 400));
+            _settings.MusicPageCover = false;
+            await Sizes($"music-nolyrics-left-{name}", (440, 140), (650, 290));
+            _settings.MusicLyricsAlign = MusicLyricsAlign.Center;
+            await Sizes($"music-nolyrics-centre-{name}", (440, 140), (650, 290));
+            _settings.MusicLyricsLayout = MusicLyricsLayout.Columns; _settings.MusicPageCover = true;
+            await Sizes($"music-nolyrics-columns-cover-{name}", (440, 200), (650, 290), (1200, 400));
+            _settings.MusicLyricsLayout = MusicLyricsLayout.Stacked;
+        }
+        _settings.MusicLyricsLayout = MusicLyricsLayout.Columns; _settings.MusicPageCover = true; _settings.MusicWidth = 650; _settings.MusicHeight = 290; Refresh();
+        await Settle(); Scrolled(); await Save("music-nolyrics-columns-cover-long-scrolled-650x290", 1.5);
+        // The two layouts with the cover and the lyrics, for the cards' diagrams.
+        _settings.LyricsEnabled = true; Play("short", _track.Title);
+        await Sizes("music-columns-cover", (440, 200), (650, 290), (760, 300), (1200, 400));
+        // The equalizer at the top right of the column layout, at its longest, and without the cover.
+        _settings.MusicEqualizerBars = 20;
+        await Sizes("music-columns-cover-20bars", (440, 140), (440, 200), (650, 290));
+        _settings.MusicPageCover = false;
+        await Sizes("music-columns-nocover-20bars", (440, 140), (440, 200), (650, 290));
+        Play("long", longTitle); _settings.LyricsEnabled = false; _settings.MusicPageCover = true;
+        await Sizes("music-nolyrics-columns-cover-long-20bars", (440, 140), (440, 200));
+        _settings.MusicLyricsLayout = MusicLyricsLayout.Stacked;
+        await Sizes("music-nolyrics-stacked-cover-long-20bars", (440, 140), (650, 290));
+        _settings.LyricsEnabled = true; _settings.MusicEqualizerBars = 5; Play("short", _track.Title);
+        _settings.MusicLyricsLayout = MusicLyricsLayout.Stacked;
+        await Sizes("music-stacked-cover", (440, 200), (650, 290), (760, 300), (1200, 400));
+        // The settings' "展开时" with each pair of the cover and the lyrics.
+        foreach (var (cover, lyrics) in new[] { (true, true), (false, true), (true, false), (false, false) })
+        {
+            _settings.MusicPageCover = cover; _settings.LyricsEnabled = lyrics;
+            await SettingsPage($"music-settings-cover{(cover ? 1 : 0)}-lyrics{(lyrics ? 1 : 0)}", 5, 1500);
+        }
+        Program.Call(_deck, "ApplyMediaUpdate", update, _track, new List<MediaTrack> { _track, _other }, _cover, false);
+        _settings.MusicPageCover = true; _settings.LyricsEnabled = true; _settings.MusicLyricsAlign = MusicLyricsAlign.Left; _settings.MusicEqualizerBars = CompactMusicLayout.DefaultBars;
+        _settings.Animations = true; _settings.MusicWidth = 440; _settings.MusicHeight = 200; Refresh();
+        SelectPage(DeckPage.Usage);
+    }
+
+    // Puts the open page's title where it stands part of the way through its scroll: nothing animates in this window.
+    private void Scrolled()
+    {
+        if (Program.Field(_deck, "_musicTitle") is not FrameworkElement title) return;
+        double width = (double)Program.Field(title, "_fadeWidth")!;
+        if (width <= 0) { Console.WriteLine("the title does not overhang"); return; }
+        double edge = Math.Min(.5, (double)Program.GetProperty(title, "EdgeWidth")! / width);
+        ((TranslateTransform)Program.Field(title, "_shift")!).X = -60; ((TranslateTransform)Program.Field(title, "_unshift")!).X = 60;
+        foreach (var stop in new[] { "_left", "_tailLeft" }) ((GradientStop)Program.Field(title, stop)!).Offset = edge;
+    }
+
     // The settings window is built without being shown: its content is taken out, laid out at the default size and
     // captured with the window's resources.
     private async Task ShelfNotice()
@@ -1469,7 +1562,8 @@ internal sealed class Renderer(App app, string output, string language, string[]
         Write(bitmap, Path.Combine(output, name + ".png"));
         Console.WriteLine(name);
         if (tips) HelpTips(root, name);
-        window.Close();
+        // Closing saves the settings into the profile in use; the invented settings hold none, and nothing here is to be saved.
+        try { window.Close(); } catch (ArgumentOutOfRangeException) { }
     }
 
     // The descriptions behind a page's info marks, each as its tooltip lays it out (the font, the width its text is given, the
