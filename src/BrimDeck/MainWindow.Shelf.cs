@@ -1063,7 +1063,7 @@ public partial class MainWindow
 
     // ---- Actions ----
     private void PasteClip(ClipEntry clip, bool plain = false)
-        => _app.Shelf.Paste(_app.Shelf.ClipData(clip, plain), done => Flash(clip.Id, done ? Loc.T("已粘贴", "Pasted") : Loc.T("已复制", "Copied")));
+        => _app.Shelf.Paste(_app.Shelf.ClipData(clip, plain), result => Flash(clip.Id, PasteWord(result)));
     // Copied again, the entry moves to the top as any new copy does, and the list shows it there.
     private void CopyClip(ClipEntry clip)
     {
@@ -1100,7 +1100,41 @@ public partial class MainWindow
     {
         var present = files.Where(file => ShelfFiles.Exists(file.Path)).ToList();
         if (present.Count == 0) return;
-        _app.Shelf.Paste(ShelfService.FileData(present.Select(file => file.Path)), done => { foreach (var file in present) Flash(file.Id, done ? Loc.T("已粘贴", "Pasted") : Loc.T("已复制", "Copied")); });
+        _app.Shelf.Paste(ShelfService.FileData(present.Select(file => file.Path)), result => { string word = PasteWord(result); foreach (var file in present) Flash(file.Id, word); });
+    }
+    // What the row says after a click: pasted, or copied with the paste left to the user. The window of a program run as
+    // administrator takes no paste from BrimDeck: the row says copied, and the reason, too long for a row's end, stands at the
+    // foot of the panel for a moment.
+    private string PasteWord(PasteResult result)
+    {
+        if (result == PasteResult.Pasted) return Loc.T("已粘贴", "Pasted");
+        if (result == PasteResult.Elevated)
+        {
+            ShowShelfNotice(Loc.T("已复制，目标窗口是管理员权限，请手动粘贴", "Copied. Target runs as administrator; paste manually"));
+            return Loc.T("已复制", "Copied");
+        }
+        return Loc.T("已复制，请手动粘贴", "Copied. Paste manually");
+    }
+    private Border? _shelfNotice;
+    private DispatcherTimer? _shelfNoticeTimer;
+    // A line at the foot of the panel, across its width, gone after three seconds: it holds what no row has room for.
+    private void ShowShelfNotice(string text)
+    {
+        if (_shelfNotice is null)
+        {
+            _shelfNotice = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 6, 12, 6), BorderThickness = new Thickness(1), IsHitTestVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(12, 0, 12, 10),
+                Child = new TextBlock { FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis } };
+            Grid.SetRow(_shelfNotice, 1); Panel.SetZIndex(_shelfNotice, 10);
+            ContentCanvas.Children.Add(_shelfNotice);
+            _shelfNoticeTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromSeconds(3) };
+            _shelfNoticeTimer.Tick += (_, _) => { _shelfNoticeTimer!.Stop(); _shelfNotice!.Visibility = Visibility.Collapsed; };
+        }
+        _shelfNotice.Background = UI.Brush(Look.Hex("popup")); _shelfNotice.BorderBrush = UI.Brush(Look.Hex("popupBorder"));
+        var line = (TextBlock)_shelfNotice.Child; line.Text = text; line.Foreground = UI.Brush(Look.Primary);
+        AutomationProperties.SetLiveSetting(_shelfNotice, AutomationLiveSetting.Polite); AutomationProperties.SetName(_shelfNotice, text);
+        _shelfNotice.Visibility = Visibility.Visible;
+        _shelfNoticeTimer!.Stop(); _shelfNoticeTimer.Start();
     }
     private void Flash(Guid id, string text)
     {
@@ -1129,6 +1163,8 @@ public partial class MainWindow
         row.Background = new SolidColorBrush(Color.FromArgb(51, accent.R, accent.G, accent.B));
         if (aux.Tag is RowEnd end)
         {
+            // A row too narrow for the whole of it (a tile, a narrow column) says only its first part: "已复制".
+            if (row.ActualWidth > 0 && TextWidth(text, end.Label.FontSize, FontWeights.Normal) > row.ActualWidth - 16) text = text.Split('，', '.')[0];
             end.Label.Tag ??= end.Label.Text;
             // On the tinted row the word keeps as far from the right edge as the entry does from the left (8 DIP: the row's right
             // padding is 4).

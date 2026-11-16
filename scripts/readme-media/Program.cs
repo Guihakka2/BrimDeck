@@ -173,6 +173,8 @@ internal sealed class Renderer(App app, string output, string language, string[]
             if (scenes.Contains("shelf-measures")) await ShelfMeasures();
             // The clipboard sync page and its connecting windows in each state; for checking, not for the README.
             if (scenes.Contains("clipboard-sync")) await ClipboardSyncScene(folder);
+            // The line at the foot of the clipboard page that says why a click only copied, at the smallest panel and a usual one.
+            if (scenes.Contains("shelf-notice")) await ShelfNotice();
         }
         finally { Directory.Delete(folder, true); }
     }
@@ -919,6 +921,33 @@ internal sealed class Renderer(App app, string output, string language, string[]
 
     // The settings window is built without being shown: its content is taken out, laid out at the default size and
     // captured with the window's resources.
+    private async Task ShelfNotice()
+    {
+        _settings.Animations = false;
+        SelectPage(DeckPage.Clipboard);
+        _deck.SetExpanded(true, true);
+        var result = Type.GetType("BrimDeck.PasteResult, BrimDeck")!;
+        foreach (var (width, height) in new (double, double)[] { (440, 140), (620, 220) })
+        {
+            _settings.ClipboardWidth = width; _settings.ClipboardHeight = height; Refresh();
+            _settings.ShelfArrangement = ShelfArrangement.Split;
+            Program.Call(_deck, "RenderShelf", [typeof(bool)], false);
+            await Settle();
+            var rows = (System.Collections.IDictionary)Program.Field(_deck, "_shelfRows")!;
+            var first = rows.Keys.Cast<Guid>().First();
+            foreach (string kind in new[] { "Elevated", "Copied" })
+            {
+                string word = (string)Program.Call(_deck, "PasteWord", [result], Enum.Parse(result, kind))!;
+                Program.Call(_deck, "Flash", [typeof(Guid), typeof(string)], first, word);
+                await Save($"shelf-notice-{kind.ToLowerInvariant()}-{width}x{height}", 2);
+                if (Program.Field(_deck, "_shelfNotice") is UIElement notice) notice.Visibility = Visibility.Collapsed;
+                Program.Call(_deck, "FlashEnded", [typeof(object), typeof(EventArgs)], null, EventArgs.Empty);
+            }
+        }
+        SelectPage(DeckPage.Usage);
+        _deck.SetExpanded(false, true);
+    }
+
     private async Task ShelfLayouts()
     {
         const double scale = 2;

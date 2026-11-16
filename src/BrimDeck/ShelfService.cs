@@ -15,6 +15,8 @@ namespace BrimDeck;
 // are read only to paste. Only the list is held in memory; pictures are read to be shown. Earlier versions encrypted both for the current Windows user
 // (DPAPI); such files are still read, and the list is written plain at its next save. Encrypting the whole list took from a
 // tenth of a second to seconds once it held thousands of entries, on the panel's thread, at every save.
+internal enum PasteResult { Pasted, Copied, Elevated }
+
 internal sealed class ShelfService : IDisposable
 {
     private readonly string _folder, _file, _pictures;
@@ -508,13 +510,19 @@ internal sealed class ShelfService : IDisposable
     // The window to paste into after the panel took the focus for typing (MainWindow.ShelfTyping).
     public IntPtr TypingTarget { get; set; }
 
-    // Puts data on the clipboard and pastes it into the window the user was typing in. done: true once Ctrl+V was sent, false when
-    // it could only be copied (no other window to paste into, or keys still held after a second).
-    public void Paste(DataObject data, Action<bool> done)
+    // Puts data on the clipboard and pastes it into the window the user was typing in. done: Pasted once Ctrl+V was sent; Copied
+    // when it could only be copied (no other window to paste into, or keys still held after a second).
+    //
+    // The paste is always tried first. A window of a program run as administrator does not take it: Windows drops the keys an
+    // ordinary program sends there, and says nothing of it, SendInput reporting them sent all the same. So once the paste has
+    // been tried, whether it seemed to go or not, the window's program is looked at: with more rights than BrimDeck it cannot
+    // have had the paste, and done is Elevated.
+    public void Paste(DataObject data, Action<PasteResult> done)
     {
-        if (!Put(data)) { done(false); return; }
+        if (!Put(data)) { done(PasteResult.Copied); return; }
         var target = PasteInput.IsOther(PasteInput.Foreground) ? PasteInput.Foreground : TypingTarget;
-        if (!PasteInput.IsOther(target)) { done(false); return; }
+        if (!PasteInput.IsOther(target)) { done(PasteResult.Copied); return; }
+        void Tried(bool sent) => done(PasteInput.HasMoreRights(target) ? PasteResult.Elevated : sent ? PasteResult.Pasted : PasteResult.Copied);
         long started = Environment.TickCount64;
         bool asked = false;
         var wait = new DispatcherTimer(DispatcherPriority.Input, _dispatcher) { Interval = TimeSpan.FromMilliseconds(20) };
@@ -524,12 +532,12 @@ internal sealed class ShelfService : IDisposable
             if (PasteInput.Foreground != target)
             {
                 if (!asked) { asked = true; PasteInput.Activate(target); }
-                if (late) { wait.Stop(); done(false); }
+                if (late) { wait.Stop(); Tried(false); }
                 return;
             }
-            if (PasteInput.ModifiersDown) { if (late) { wait.Stop(); done(false); } return; }
+            if (PasteInput.ModifiersDown) { if (late) { wait.Stop(); Tried(false); } return; }
             wait.Stop();
-            done(PasteInput.SendPaste());
+            Tried(PasteInput.SendPaste());
         };
         wait.Start();
     }
