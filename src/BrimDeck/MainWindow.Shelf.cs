@@ -1005,14 +1005,15 @@ public partial class MainWindow
             var list = files();
             if (list.Count == 0) return;
             suppressMenu = right;
-            bool move = (right ? Settings.TransferRightDragOut : Settings.TransferDragOut) == TransferDragOut.Move;
+            // The setting is what the left button does; the right button does the other.
+            bool move = (Settings.TransferDragOut == TransferDragOut.Move) != right;
             var data = ShelfService.FileData(list.Select(file => file.Path), move);
             data.SetData(ShelfFormat, ShelfSide.Files + "|" + string.Join(",", list.Select(file => file.Id)));
             if (source is Border row) row.Background = _picked.Count > 0 && list.Count > 1 ? PickedFill : row.Tag as Brush ?? Brushes.Transparent;
             bool removeCopy = move && Settings.TransferRemoveAfterCopyDrop;
             var allowed = move ? DragDropEffects.Copy | DragDropEffects.Move : DragDropEffects.Copy;
             if (removeCopy) allowed |= DragDropEffects.Link;
-            var result = DragOut(source, data, allowed, right);
+            var result = DragOut(source, data, allowed, right, move);
             // Copy-configured gestures never consume transfer entries, even when
             // the optional fallback for move-configured gestures is enabled.
             if (move && removeCopy && (result is DragDropEffects.Copy or DragDropEffects.Link) && _externalFileDrop)
@@ -1022,10 +1023,13 @@ public partial class MainWindow
         };
     }
     // Dragged out of the panel, clipboard entries are copied; files are copied, or, when the drag is set to move, moved where the
-    // target takes moves (a chat window or a browser takes only copies).
+    // target takes moves (a chat window or a browser takes only copies). Files carry a word beside the pointer that says which
+    // (DragHint); `moving` is what their drag is set to do.
     private bool _externalFileDrop;
-    private DragDropEffects DragOut(DependencyObject source, DataObject data, DragDropEffects allowed = DragDropEffects.Copy, bool right = false)
+    private DragDropEffects DragOut(DependencyObject source, DataObject data, DragDropEffects allowed = DragDropEffects.Copy, bool right = false, bool? moving = null)
     {
+        DragHint? hint = null;
+        GiveFeedbackEventHandler? feedback = null;
         _draggingOut = true;
         // Finish the popup's input lifetime before injecting buttons or entering
         // OLE. Popup.Closed may arrive later than IsOpen becoming false.
@@ -1041,16 +1045,35 @@ public partial class MainWindow
         {
             using var gesture = right && source is UIElement element ? RightFileDrag.Begin(element) : null;
             if (right && gesture is null) return DragDropEffects.None;
+            if (moving is { } move && source is UIElement hinted)
+            {
+                // Windows reports what the place under the pointer would do each time the pointer moves; the word follows it.
+                var word = hint = new DragHint(Look);
+                feedback = (_, e) => word.Say(DragWord(e.Effects, move));
+                hinted.GiveFeedback += feedback;
+                word.Say(DragWord(DragDropEffects.None, move));
+            }
             return DragDrop.DoDragDrop(source, data, allowed);
         }
         catch (Exception error) when (error is System.Runtime.InteropServices.COMException or InvalidOperationException) { }
         finally
         {
+            if (feedback is not null) ((UIElement)source).GiveFeedback -= feedback;
+            hint?.Close();
             if (source is UIElement dragSourceEnd) dragSourceEnd.PreviewQueryContinueDrag -= dropping;
             _draggingOut = false;
             if (_expanded && !_pointerInside) PointerChanged(false);
         }
         return DragDropEffects.None;
+    }
+    // The word beside the pointer. Over BrimDeck itself, where the drag begins and letting go moves no file, it is what this drag
+    // is set to do; elsewhere what the place under the pointer says it will do, and nothing where it takes no files.
+    private static string? DragWord(DragDropEffects effects, bool move)
+    {
+        if (WindowsHost.OwnWindowAt(WindowsHost.Cursor())) effects = move ? DragDropEffects.Move : DragDropEffects.Copy;
+        return effects.HasFlag(DragDropEffects.Move) ? Loc.T("移动", "Move")
+            : effects.HasFlag(DragDropEffects.Copy) ? Loc.T("复制", "Copy")
+            : effects.HasFlag(DragDropEffects.Link) ? Loc.T("链接", "Link") : null;
     }
     // Files dragged out to be moved leave the list once they are gone from where they were. The drag's result does not tell: the
     // Explorer moves files itself and reports no move, and it may still be moving them after the drag ends (a large file to another

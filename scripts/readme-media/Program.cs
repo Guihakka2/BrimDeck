@@ -175,6 +175,8 @@ internal sealed class Renderer(App app, string output, string language, string[]
             if (scenes.Contains("clipboard-sync")) await ClipboardSyncScene(folder);
             // The line at the foot of the clipboard page that says why a click only copied, at the smallest panel and a usual one.
             if (scenes.Contains("shelf-notice")) await ShelfNotice();
+            // The file transfer's settings, and the word beside the pointer while files are dragged out; for checking.
+            if (scenes.Contains("transfer-settings")) { await DragHints(); await SettingsPage("transfer-settings", 14, tips: true); }
         }
         finally { Directory.Delete(folder, true); }
     }
@@ -1448,7 +1450,7 @@ internal sealed class Renderer(App app, string output, string language, string[]
         }
     }
 
-    private async Task SettingsPage(string name, int page, double height = 640)
+    private async Task SettingsPage(string name, int page, double height = 640, bool tips = false)
     {
         const double scale = 1.5, width = 960;
         _settings.Theme = SettingsTheme.Dark;
@@ -1466,7 +1468,37 @@ internal sealed class Renderer(App app, string output, string language, string[]
         bitmap.Render(root); bitmap.Freeze();
         Write(bitmap, Path.Combine(output, name + ".png"));
         Console.WriteLine(name);
+        if (tips) HelpTips(root, name);
         window.Close();
+    }
+
+    // The descriptions behind a page's info marks, each as its tooltip lays it out (the font, the width its text is given, the
+    // line height), without opening one: where a line breaks shows only there. Outside the window a tooltip takes the panel's
+    // colors, not the settings'; its layout is the same.
+    private void HelpTips(DependencyObject root, string name)
+    {
+        const double scale = 3;
+        var marks = new List<FrameworkElement>();
+        void Walk(DependencyObject parent)
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is FrameworkElement { ToolTip: System.Windows.Controls.ToolTip { Content: System.Windows.Controls.TextBlock } } mark) marks.Add(mark);
+                Walk(child);
+            }
+        }
+        Walk(root);
+        for (int i = 0; i < marks.Count; i++)
+        {
+            var tip = (System.Windows.Controls.ToolTip)marks[i].ToolTip;
+            tip.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            tip.Arrange(new Rect(tip.DesiredSize)); tip.UpdateLayout();
+            if (tip.ActualWidth < 1 || tip.ActualHeight < 1) continue;
+            var picture = new RenderTargetBitmap((int)Math.Ceiling(tip.ActualWidth * scale), (int)Math.Ceiling(tip.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            picture.Render(tip); picture.Freeze();
+            Write(picture, Path.Combine(output, $"{name}-tip-{i + 1}.png"));
+        }
     }
 
     private object Point(object? element)
@@ -1545,6 +1577,48 @@ internal sealed class Renderer(App app, string output, string language, string[]
         Equalizer(equalizer);
         Write(Capture(scale), Path.Combine(output, name + ".png"));
         Console.WriteLine(name);
+    }
+
+    // The word that follows the pointer while files are dragged out (DragHint), each word it can say in the window itself. A
+    // window comes out no smaller than Windows lets one be, which a picture of the frame alone does not show: the window is opened
+    // fully transparent for the moment its layout takes, and the picture shows all of it, outlined, with the frame as it lies in it.
+    // The sizes are written out as well.
+    private async Task DragHints()
+    {
+        var look = Type.GetType("BrimDeck.PanelTheme, BrimDeck")!.GetProperty("Main", Program.Any)!.GetValue(null);
+        var type = Type.GetType("BrimDeck.DragHint, BrimDeck")!;
+        const double scale = 3, gap = 16;
+        var shots = new List<(BitmapSource Picture, Size Window)>();
+        foreach (var word in new[] { Loc.T("复制", "Copy"), Loc.T("移动", "Move"), Loc.T("链接", "Link") })
+        {
+            var window = (Window)Activator.CreateInstance(type, Program.Any, null, [look], null)!;
+            window.Opacity = 0;
+            type.GetMethod("Say", Program.Any)!.Invoke(window, [word]);
+            await Settle();
+            var frame = (FrameworkElement)window.Content;
+            var picture = new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth * scale), (int)Math.Ceiling(window.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            picture.Render(frame); picture.Freeze();
+            shots.Add((picture, new Size(window.ActualWidth, window.ActualHeight)));
+            Console.WriteLine($"drag-hint {word}: window {window.ActualWidth:0.#} x {window.ActualHeight:0.#}, frame {frame.ActualWidth:0.#} x {frame.ActualHeight:0.#}");
+            window.Close();
+        }
+        double width = shots.Sum(shot => shot.Window.Width + gap) + gap, height = shots.Max(shot => shot.Window.Height) + 2 * gap;
+        var sheet = new DrawingVisual();
+        using (var context = sheet.RenderOpen())
+        {
+            context.DrawRectangle(new SolidColorBrush(Color.FromRgb(0x6A, 0x70, 0x7A)), null, new Rect(0, 0, width, height));
+            double x = gap;
+            foreach (var (picture, size) in shots)
+            {
+                var box = new Rect(x, gap, size.Width, size.Height);
+                context.DrawRectangle(null, new Pen(new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)), 1) { DashStyle = DashStyles.Dash }, box);
+                context.DrawImage(picture, box);
+                x += size.Width + gap;
+            }
+        }
+        var bitmap = new RenderTargetBitmap((int)(width * scale), (int)(height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+        bitmap.Render(sheet); bitmap.Freeze();
+        Write(bitmap, Path.Combine(output, "drag-hint.png"));
     }
 
     private static void Write(BitmapSource image, string path)

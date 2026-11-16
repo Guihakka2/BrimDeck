@@ -629,8 +629,9 @@ public sealed class DeckSettings
     // What is kept (ShelfData.Kept: phrases, 常用, the categories set to keep) stays either way.
     public bool ClipboardKeepHistory { get; set; }
     public HistoryLength ClipboardKeepFor { get; set; } = HistoryLength.Month;
+    // What the left button does with files dragged out of the file transfer; the right button does the other of the two.
     public TransferDragOut TransferDragOut { get; set; } = TransferDragOut.Copy;
-    public TransferDragOut TransferRightDragOut { get; set; } = TransferDragOut.Move;
+    // On, files dragged out to be moved that a target took as copies (a chat window, a browser) leave the list as well.
     public bool TransferRemoveAfterCopyDrop { get; set; }
     // Which columns the page shows: both, or only the clipboard or only the file transfer over the whole width. Only with both are
     // they arranged (ShelfArrangement): side by side or stacked as cards (ShelfLayout), and side by side the file transfer's share
@@ -914,7 +915,6 @@ public sealed class DeckSettings
         ClipboardWidth = double.IsFinite(ClipboardWidth) ? Math.Clamp(ClipboardWidth, DeckPages.MinWidth, DeckPages.MaxWidth) : ShelfSizes.Default.Width;
         ClipboardHeight = double.IsFinite(ClipboardHeight) ? Math.Clamp(ClipboardHeight, DeckPages.MinHeight, DeckPages.MaxHeight) : ShelfSizes.Default.Height;
         if (!Enum.IsDefined(TransferDragOut)) TransferDragOut = TransferDragOut.Copy;
-        if (!Enum.IsDefined(TransferRightDragOut)) TransferRightDragOut = TransferDragOut.Move;
         if (!Enum.IsDefined(ShelfShown)) ShelfShown = ShelfShown.Both;
         if (!Enum.IsDefined(ShelfArrangement)) ShelfArrangement = ShelfArrangement.Split;
         if (!Enum.IsDefined(ShelfClipView)) ShelfClipView = ClipView.Single;
