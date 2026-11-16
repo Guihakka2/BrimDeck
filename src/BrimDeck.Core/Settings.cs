@@ -709,6 +709,9 @@ public sealed class DeckSettings
     public int NoticeHighDuration { get; set; } = 8;
     public NoticeScreen NoticeScreen { get; set; }
     public NoticePrivacy NoticePrivacy { get; set; }
+    // Recognises a verification code in a notice, hides it wherever the notice is shown and offers a button that copies it (see
+    // NoticeCodes). Off by default: it reads the notices' words and, on a click, writes the clipboard.
+    public bool NoticeCodes { get; set; }
     // What a click on a notice shown on the collapsed island opens; the notices page unless changed.
     public NoticeClickTarget NoticeClick { get; set; }
     // Holds notices back during a Windows focus session or presentation mode.
