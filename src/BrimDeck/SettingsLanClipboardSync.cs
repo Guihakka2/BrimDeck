@@ -67,9 +67,9 @@ public sealed partial class SettingsWindow
             }
             panel.Children.Add(buttons);
         }
-        panel.Children.Add(Toggle(Loc.T("自动同步文字", "Automatically sync text"), S.LanClipboardSync && paired && !service.TestMode,
+        panel.Children.Add(Toggle(Loc.T("自动同步文字和图片", "Automatically sync text and images"), S.LanClipboardSync && paired && !service.TestMode,
             value => Change(s => s.LanClipboardSync = value), enabled: paired && !service.TestMode,
-            help: Loc.T("两台设备均需开启。只同步连接期间新复制的文字。", "Enable this on both devices to sync new text copied while connected.")));
+            help: Loc.T("两台设备均需开启。图片以 PNG 传输，单张最多 8 MiB。旧版对端只支持文字。", "Enable this on both devices. Images sync as PNG, up to 8 MiB each. Older builds support text only.")));
         Target.Children.Add(card);
     }
 

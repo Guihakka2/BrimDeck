@@ -6,15 +6,18 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
+using System.Windows.Media.Imaging;
 using BrimDeck.Core;
 using BrimDeck.Core.ClipboardSync;
+using BrimDeck.Native;
 
 namespace BrimDeck;
 
 internal sealed partial class ClipboardSyncService
 {
     private CancellationTokenSource? _lanStop;
-    private Channel<string>? _lanOutgoing;
+    private Channel<ClipCopy>? _lanOutgoing;
+    private bool _lanImages;
     public string LanStatus { get; private set; } = "";
 
     public void SetLanPeer(LanClipboardPeer? peer)
@@ -51,6 +54,7 @@ internal sealed partial class ClipboardSyncService
         var stop = _lanStop;
         _lanStop = null;
         _lanOutgoing = null;
+        _lanImages = false;
         stop?.Cancel();
     }
 
@@ -70,11 +74,13 @@ internal sealed partial class ClipboardSyncService
                 try
                 {
                     Status(Loc.T("等待局域网设备连接…", "Waiting for the LAN device…"));
-                    await LanClipboardLink.RunAsync(peer, async (stream, token) =>
+                    await LanClipboardLink.RunWithImagesAsync(peer, async (stream, images, token) =>
                     {
                         token.ThrowIfCancellationRequested();
-                        Status(Loc.T("已连接 · 正在同步文字", "Connected · Syncing text"));
-                        try { await ExchangeLanTextAsync(stream, token); }
+                        Status(images
+                            ? Loc.T("已连接 · 正在同步文字和图片", "Connected · Syncing text and images")
+                            : Loc.T("已连接 · 对端仅支持文字同步", "Connected · The other PC supports text only"));
+                        try { await ExchangeLanAsync(stream, images, token); }
                         finally { Status(Loc.T("等待局域网设备重新连接…", "Waiting for the LAN device to reconnect…")); }
                     }, stop.Token);
                 }
@@ -108,21 +114,26 @@ internal sealed partial class ClipboardSyncService
         }
     }
 
-    private async Task ExchangeLanTextAsync(SslStream stream, CancellationToken cancellation)
+    private async Task ExchangeLanAsync(SslStream stream, bool images, CancellationToken cancellation)
     {
         using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var outgoing = Channel.CreateBounded<string>(new BoundedChannelOptions(1)
+        var outgoing = Channel.CreateBounded<ClipCopy>(new BoundedChannelOptions(1)
         {
             SingleReader = true,
             SingleWriter = true,
             FullMode = BoundedChannelFullMode.DropOldest
         });
         _lanOutgoing = outgoing;
+        _lanImages = images;
         Task read = ReadAsync();
         Task write = WriteAsync();
         await Task.WhenAny(read, write);
         session.Cancel();
-        if (ReferenceEquals(_lanOutgoing, outgoing)) _lanOutgoing = null;
+        if (ReferenceEquals(_lanOutgoing, outgoing))
+        {
+            _lanOutgoing = null;
+            _lanImages = false;
+        }
         await Task.WhenAll(read, write);
 
         async Task ReadAsync()
@@ -132,15 +143,38 @@ internal sealed partial class ClipboardSyncService
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(20));
-                string? text = await LanClipboardLink.ReadTextAsync(stream, timeout.Token);
+                var content = await LanClipboardLink.ReadContentAsync(stream, images, timeout.Token);
                 session.Token.ThrowIfCancellationRequested();
-                if (text is null || text == last || LanClipboardLink.ContainsInvitation(text)) continue;
-                if (!outgoing.Reader.TryPeek(out _))
+                if (content is null) continue;
+                string source = Loc.T("局域网设备", "LAN device");
+                if (content is LanClipboardContent.Text(var text))
                 {
-                    try { AcceptText(text, Loc.T("局域网设备", "LAN device")); }
-                    catch (ExternalException) { /* The clipboard is currently locked by another application. */ }
+                    string hash = Hash(text);
+                    if (LanClipboardLink.ContainsInvitation(text) || hash == last) continue;
+                    if (!outgoing.Reader.TryPeek(out _))
+                    {
+                        try { AcceptText(text, source); }
+                        catch (ExternalException) { /* The clipboard is currently locked by another application. */ }
+                    }
+                    last = hash;
                 }
-                last = text;
+                else if (content is LanClipboardContent.Image(var png))
+                {
+                    string hash = HashImage(png.Bytes);
+                    if (hash == last || outgoing.Reader.TryPeek(out _)) continue;
+                    uint sequence = ClipboardWatch.GetClipboardSequenceNumber();
+                    BitmapSource bitmap;
+                    try { bitmap = await Task.Run(() => ShelfService.DecodeRemoteImage(png), timeout.Token); }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or FileFormatException or ArgumentException or NotSupportedException or InvalidOperationException) { continue; }
+                    timeout.Token.ThrowIfCancellationRequested();
+                    if (sequence == ClipboardWatch.GetClipboardSequenceNumber() && !outgoing.Reader.TryPeek(out _) &&
+                        _app.Shelf.AcceptRemoteImage(png, bitmap, source))
+                    {
+                        _watch?.IgnoreCurrent();
+                        RememberReceived(hash);
+                    }
+                    last = hash;
+                }
             }
         }
 
@@ -151,19 +185,33 @@ internal sealed partial class ClipboardSyncService
             {
                 using var idle = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
                 idle.CancelAfter(TimeSpan.FromSeconds(5));
-                string? text = null;
-                try { text = await outgoing.Reader.ReadAsync(idle.Token); }
+                ClipCopy? copy = null;
+                try { copy = await outgoing.Reader.ReadAsync(idle.Token); }
                 catch (OperationCanceledException) when (!session.IsCancellationRequested) { }
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(8));
-                if (text is null || text == last)
-                    await LanClipboardLink.KeepAliveAsync(stream, timeout.Token);
-                else
+                if (copy is null)
                 {
-                    try { await LanClipboardLink.WriteTextAsync(stream, text, timeout.Token); }
-                    catch (EncoderFallbackException) { continue; }
-                    last = text;
+                    await LanClipboardLink.KeepAliveAsync(stream, timeout.Token);
+                    continue;
                 }
+                if (copy.Png is { } bytes)
+                {
+                    if (!images) continue;
+                    string hash = HashImage(bytes);
+                    if (hash == last) continue;
+                    LanPng png;
+                    try { png = await Task.Run(() => LanPng.Validate(bytes, timeout.Token), timeout.Token); }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException) { continue; }
+                    await LanClipboardLink.WriteImageAsync(stream, png, timeout.Token);
+                    last = hash;
+                    continue;
+                }
+                string textHash = Hash(copy.Text);
+                if (textHash == last) continue;
+                try { await LanClipboardLink.WriteTextAsync(stream, copy.Text, timeout.Token); }
+                catch (EncoderFallbackException) { continue; }
+                last = textHash;
             }
         }
     }

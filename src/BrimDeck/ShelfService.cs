@@ -106,6 +106,26 @@ internal sealed class ShelfService : IDisposable
         if (_settings().ClipboardRecord) Copied(new ClipCopy(text, "", "", null, 0, 0, source));
     }
 
+    internal static BitmapSource DecodeRemoteImage(BrimDeck.Core.ClipboardSync.LanPng png)
+    {
+        using var bytes = new MemoryStream(png.Bytes, writable: false);
+        var frame = BitmapFrame.Create(bytes, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        if (frame.PixelWidth != png.Width || frame.PixelHeight != png.Height)
+            throw new InvalidDataException("PNG dimensions do not match the frame.");
+        frame.Freeze();
+        return frame;
+    }
+
+    internal bool AcceptRemoteImage(BrimDeck.Core.ClipboardSync.LanPng png, BitmapSource image, string source)
+    {
+        var data = new DataObject();
+        data.SetImage(image);
+        data.SetData("PNG", new MemoryStream(png.Bytes, writable: false));
+        if (!Put(data)) return false;
+        if (_settings().ClipboardRecord) Copied(new ClipCopy("", "", "", png.Bytes, png.Width, png.Height, source));
+        return true;
+    }
+
     // The history kept past an exit that has grown older than its length goes (Shelf.Expired).
     private void Expire(bool raise)
     {

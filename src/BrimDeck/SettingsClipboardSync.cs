@@ -35,7 +35,7 @@ public sealed partial class SettingsWindow
         AddLanSync(); AddSyncProvider(true); AddSyncProvider(false); RefreshSyncStatus();
         _syncNameTimer ??= new System.Windows.Threading.DispatcherTimer(TimeSpan.FromSeconds(15), System.Windows.Threading.DispatcherPriority.Background, async (_, _) => await RefreshWeTypeNameAsync(), Dispatcher);
         _ = RefreshWeTypeNameAsync();
-        SyncNote(Loc.T("仅同步新复制的文字，单条最多 256 KB。图片、文件和历史记录暂不支持。", "Newly copied text only, up to 256 KB per item. Pictures, files and history are not supported."));
+        SyncNote(Loc.T("同步连接期间新复制的内容。文字单条最多 256 KiB，图片仅支持局域网同步。", "Sync content copied while connected. Text is limited to 256 KiB per item. Images sync over LAN only."));
     }
     private void AddSyncProvider(bool doubao)
     {

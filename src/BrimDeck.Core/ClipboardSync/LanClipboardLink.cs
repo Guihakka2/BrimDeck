@@ -15,11 +15,17 @@ public sealed record LanClipboardPeer(string Address, int Port, byte[] Fingerpri
     public bool IsHost => HostCertificate is not null;
 }
 
+public abstract record LanClipboardContent
+{
+    public sealed record Text(string Value) : LanClipboardContent;
+    public sealed record Image(LanPng Png) : LanClipboardContent;
+}
+
 public static class LanClipboardLink
 {
     private const string InvitePrefix = "BD-LAN-1.";
     private const int KeySize = 32;
-    private const byte Pair = 1, Sync = 2;
+    private const byte Pair = 1, Sync = 2, SyncWithImages = 3;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(8);
 
     public static IReadOnlyList<IPAddress> LocalAddresses() => LanNetwork.Interfaces().Select(n => n.Address).Distinct().ToArray();
@@ -135,10 +141,18 @@ public static class LanClipboardLink
         CancellationToken cancellation)
     {
         using var network = new NetworkLifetime(cancellation);
-        await RunOnCurrentNetworkAsync(config, session, network.Token);
+        await RunOnCurrentNetworkAsync(config, false, (stream, _, token) => session(stream, token), network.Token);
     }
 
-    private static async Task RunOnCurrentNetworkAsync(LanClipboardPeer config, Func<SslStream, CancellationToken, Task> session,
+    public static async Task RunWithImagesAsync(LanClipboardPeer config,
+        Func<SslStream, bool, CancellationToken, Task> session, CancellationToken cancellation)
+    {
+        using var network = new NetworkLifetime(cancellation);
+        await RunOnCurrentNetworkAsync(config, true, session, network.Token);
+    }
+
+    private static async Task RunOnCurrentNetworkAsync(LanClipboardPeer config, bool allowImages,
+        Func<SslStream, bool, CancellationToken, Task> session,
         CancellationToken cancellation)
     {
         var address = IPAddress.Parse(config.Address);
@@ -156,9 +170,9 @@ public static class LanClipboardLink
                     {
                         ValidateRemote(peer, address);
                         using var stream = await SecureServerAsync(peer, cert, timeout.Token);
-                        await ReadProofAsync(stream, Sync, config.Key, timeout.Token);
-                        await stream.WriteAsync(new byte[] { Sync }, timeout.Token);
-                        await session(stream, cancellation);
+                        byte mode = await ReadProofAsync(stream, Sync, config.Key, timeout.Token, allowImages);
+                        await stream.WriteAsync(new[] { mode }, timeout.Token);
+                        await session(stream, mode == SyncWithImages, cancellation);
                     }
                     catch (Exception ex) when (RejectedConnection(ex) && !cancellation.IsCancellationRequested) { }
                 }
@@ -167,14 +181,24 @@ public static class LanClipboardLink
         }
         else
         {
-            using var peer = await ConnectAsync(address, config.Port, config.Fingerprint, async (stream, token) =>
+            byte mode = allowImages ? SyncWithImages : Sync;
+            ConnectedPeer peer;
+            try { peer = await ConnectSyncAsync(mode); }
+            catch (IOException ex) when (allowImages && ex is not LanPeerOffSubnetException && !cancellation.IsCancellationRequested)
             {
-                await WriteProofAsync(stream, Sync, config.Key, token);
-                byte[] accepted = new byte[1];
-                await stream.ReadExactlyAsync(accepted, token);
-                if (accepted[0] != Sync) throw new AuthenticationException("LAN authentication failed.");
-            }, cancellation);
-            await session(peer.Stream, cancellation);
+                mode = Sync;
+                peer = await ConnectSyncAsync(mode);
+            }
+            using (peer) await session(peer.Stream, mode == SyncWithImages, cancellation);
+
+            Task<ConnectedPeer> ConnectSyncAsync(byte requestMode) =>
+                ConnectAsync(address, config.Port, config.Fingerprint, async (stream, token) =>
+                {
+                    await WriteProofAsync(stream, requestMode, config.Key, token);
+                    byte[] accepted = new byte[1];
+                    await stream.ReadExactlyAsync(accepted, token);
+                    if (accepted[0] != requestMode) throw new AuthenticationException("LAN authentication failed.");
+                }, cancellation);
         }
     }
 
@@ -311,13 +335,16 @@ public static class LanClipboardLink
         await stream.WriteAsync(secret, ct);
     }
 
-    private static async Task ReadProofAsync(Stream stream, byte mode, byte[] expected, CancellationToken ct)
+    private static async Task<byte> ReadProofAsync(Stream stream, byte mode, byte[] expected, CancellationToken ct, bool allowImages = false)
     {
         byte[] proof = new byte[1 + KeySize];
         await stream.ReadExactlyAsync(proof, ct);
-        bool accepted = proof[0] == mode && CryptographicOperations.FixedTimeEquals(proof.AsSpan(1), expected);
+        byte requestedMode = proof[0];
+        bool accepted = (requestedMode == mode || allowImages && requestedMode == SyncWithImages) &&
+            CryptographicOperations.FixedTimeEquals(proof.AsSpan(1), expected);
         CryptographicOperations.ZeroMemory(proof);
         if (!accepted) throw new AuthenticationException("LAN authentication failed.");
+        return requestedMode;
     }
 
     public static async Task WriteTextAsync(Stream stream, string text, CancellationToken ct)
@@ -329,16 +356,36 @@ public static class LanClipboardLink
         await stream.WriteAsync(bytes, ct);
     }
 
-    public static async Task<string?> ReadTextAsync(Stream stream, CancellationToken ct)
+    public static async Task WriteImageAsync(Stream stream, LanPng image, CancellationToken ct)
+    {
+        if (!LanPng.Fits(image.Width, image.Height, image.Bytes.Length))
+            throw new InvalidDataException("Invalid LAN image size.");
+        byte[] header = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(header, -image.Bytes.Length);
+        await stream.WriteAsync(header, ct);
+        await stream.WriteAsync(image.Bytes, ct);
+    }
+
+    public static async Task<string?> ReadTextAsync(Stream stream, CancellationToken ct) =>
+        (await ReadContentAsync(stream, false, ct) as LanClipboardContent.Text)?.Value;
+
+    public static async Task<LanClipboardContent?> ReadContentAsync(Stream stream, bool allowImages, CancellationToken ct)
     {
         byte[] header = new byte[4];
         await stream.ReadExactlyAsync(header, ct);
         int length = BinaryPrimitives.ReadInt32BigEndian(header);
         if (length == 0) return null; // Keepalive
+        if (length < 0 && allowImages)
+        {
+            if (length < -LanPng.MaxBytes) throw new InvalidDataException("Invalid LAN image frame length.");
+            byte[] png = new byte[-length];
+            await stream.ReadExactlyAsync(png, ct);
+            return new LanClipboardContent.Image(await Task.Run(() => LanPng.Validate(png, ct), ct));
+        }
         if (length is < 0 or > SyncTransport.MaxTextBytes) throw new InvalidDataException("Invalid LAN clipboard frame length.");
         byte[] bytes = new byte[length];
         await stream.ReadExactlyAsync(bytes, ct);
-        try { return SyncTransport.Utf8.GetString(bytes); }
+        try { return new LanClipboardContent.Text(SyncTransport.Utf8.GetString(bytes)); }
         catch (DecoderFallbackException ex) { throw new InvalidDataException("Invalid UTF-8 in LAN clipboard frame.", ex); }
     }
 

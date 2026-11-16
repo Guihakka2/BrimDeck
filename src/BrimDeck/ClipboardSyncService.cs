@@ -181,8 +181,17 @@ internal sealed partial class ClipboardSyncService : IDisposable
     private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     private void Copied(ClipCopy copy)
     {
-        if (copy.Png is not null || copy.Text.Length == 0 || LanClipboardLink.ContainsInvitation(copy.Text)) return;
         while (_received.TryPeek(out var item) && item.Time < DateTime.UtcNow.AddMinutes(-2)) _received.Dequeue();
+        if (copy.Png is { } png)
+        {
+            if (_lanImages && _lanOutgoing is { } images && LanPng.Fits(copy.PixelWidth, copy.PixelHeight, png.Length))
+            {
+                string hash = HashImage(png);
+                if (!_received.Any(item => item.Hash == hash)) images.Writer.TryWrite(copy);
+            }
+            return;
+        }
+        if (copy.Text.Length == 0 || LanClipboardLink.ContainsInvitation(copy.Text)) return;
         if (_received.Count > 0)
         {
             string hash = Hash(copy.Text);
@@ -190,15 +199,20 @@ internal sealed partial class ClipboardSyncService : IDisposable
         }
         foreach (var provider in _workers.Keys) _pending[provider] = copy.Text;
         if (_lanOutgoing is { } outgoing && Encoding.UTF8.GetByteCount(copy.Text) <= SyncTransport.MaxTextBytes)
-            outgoing.Writer.TryWrite(copy.Text);
+            outgoing.Writer.TryWrite(copy);
     }
     private void AcceptText(string text, string source)
     {
         _app.Shelf.AcceptRemoteText(text, source);
         _watch?.IgnoreCurrent();
-        _received.Enqueue((Hash(text), DateTime.UtcNow));
+        RememberReceived(Hash(text));
+    }
+    private void RememberReceived(string hash)
+    {
+        _received.Enqueue((hash, DateTime.UtcNow));
         while (_received.Count > 64) _received.Dequeue();
     }
+    private static string HashImage(byte[] png) => "PNG:" + Convert.ToHexString(SHA256.HashData(png));
     private async Task RunAsync(bool doubao, CancellationTokenSource stop)
     {
         using IClipboardSyncClient client = doubao ? new DoubaoSyncClient(Accounts.Doubao!) : new WeTypeSyncClient(Accounts.WeType, Save);

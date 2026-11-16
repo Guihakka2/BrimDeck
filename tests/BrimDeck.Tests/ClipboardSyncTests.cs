@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -51,6 +53,88 @@ static class ClipboardSyncTests
         check("Doubao server errors retain only numeric code", new DoubaoRequestException(900102010).Message.Contains("900102010"));
         LanRoutes(check);
         LanFramesAsync(check).GetAwaiter().GetResult();
+        LanImagesAsync(check).GetAwaiter().GetResult();
+    }
+
+    private static async Task LanImagesAsync(Action<string, bool> check)
+    {
+        byte[] bytes = MakePng(2, 1, [0, 255, 0, 0, 128, 0, 255, 0, 255], metadata: true);
+        var png = LanPng.Validate(bytes);
+        check("LAN validates PNG dimensions and strips metadata", png.Width == 2 && png.Height == 1 && png.Bytes.Length < bytes.Length);
+        using var stream = new MemoryStream();
+        await LanClipboardLink.WriteTextAsync(stream, "before image", default);
+        await LanClipboardLink.WriteImageAsync(stream, png, default);
+        await LanClipboardLink.WriteTextAsync(stream, "after image", default);
+        stream.Position = 0;
+        check("LAN mixed link preserves text before an image", await LanClipboardLink.ReadContentAsync(stream, true, default) is LanClipboardContent.Text("before image"));
+        long imagePosition = stream.Position;
+        check("LAN mixed link preserves PNG bytes", await LanClipboardLink.ReadContentAsync(stream, true, default) is LanClipboardContent.Image(var image)
+            && image.Bytes.SequenceEqual(png.Bytes));
+        check("LAN mixed link still receives text after an image", await LanClipboardLink.ReadContentAsync(stream, true, default) is LanClipboardContent.Text("after image"));
+        stream.Position = imagePosition;
+        bool legacyRejected = false;
+        try { await LanClipboardLink.ReadTextAsync(stream, default); }
+        catch (InvalidDataException) { legacyRejected = true; }
+        check("LAN text-only connection rejects an image frame", legacyRejected);
+
+        byte[] badChecksum = (byte[])bytes.Clone();
+        badChecksum[^1] ^= 1;
+        foreach (var (name, invalid) in new[]
+        {
+            ("dimensions", MakePng(LanPng.MaxSide + 1, 1, [0])),
+            ("pixel count", MakePng(8192, 8192, [0])),
+            ("expands beyond dimensions", MakePng(1, 1, [0, 1, 2, 3, 4, 5])),
+            ("invalid row filter", MakePng(1, 1, [5, 1, 2, 3, 4])),
+            ("corrupt checksum", badChecksum),
+            ("truncated chunk", bytes[..^1]),
+            ("compressed size", new byte[LanPng.MaxBytes + 1])
+        })
+        {
+            bool rejected = false;
+            try { LanPng.Validate(invalid); }
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException) { rejected = true; }
+            check("LAN rejects invalid PNG " + name, rejected);
+        }
+        using var oversized = new MemoryStream([0x80, 0, 0, 0]);
+        bool tooLarge = false;
+        try { await LanClipboardLink.ReadContentAsync(oversized, true, default); }
+        catch (InvalidDataException) { tooLarge = true; }
+        check("LAN rejects image length overflow before allocating", tooLarge);
+    }
+
+    private static byte[] MakePng(int width, int height, byte[] rows, bool metadata = false)
+    {
+        using var output = new MemoryStream();
+        output.Write([137, 80, 78, 71, 13, 10, 26, 10]);
+        var header = new byte[13];
+        BinaryPrimitives.WriteInt32BigEndian(header, width);
+        BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4), height);
+        header[8] = 8;
+        header[9] = 6;
+        WriteChunk("IHDR"u8, header);
+        if (metadata) WriteChunk("tEXt"u8, "Comment\0synthetic"u8);
+        using var compressed = new MemoryStream();
+        using (var zlib = new ZLibStream(compressed, CompressionMode.Compress, leaveOpen: true)) zlib.Write(rows);
+        WriteChunk("IDAT"u8, compressed.ToArray());
+        WriteChunk("IEND"u8, []);
+        return output.ToArray();
+
+        void WriteChunk(ReadOnlySpan<byte> type, ReadOnlySpan<byte> data)
+        {
+            Span<byte> number = stackalloc byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(number, data.Length);
+            output.Write(number);
+            output.Write(type);
+            output.Write(data);
+            uint crc = uint.MaxValue;
+            foreach (byte value in type.ToArray().Concat(data.ToArray()))
+            {
+                crc ^= value;
+                for (int i = 0; i < 8; i++) crc = (crc & 1) == 0 ? crc >> 1 : (crc >> 1) ^ 0xEDB88320;
+            }
+            BinaryPrimitives.WriteUInt32BigEndian(number, ~crc);
+            output.Write(number);
+        }
     }
 
     private static void LanRoutes(Action<string, bool> check)
