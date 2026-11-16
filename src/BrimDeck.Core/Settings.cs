@@ -525,7 +525,7 @@ public sealed class DeckSettings
     // Where the lyrics sit on the page, chosen apart from the cover: under the artist in the titles' column, or in a column of
     // their own right of the titles (the cover then stands above the titles). Without the cover the titles' column may sit at the
     // page's left edge or be centred.
-    public MusicLyricsLayout MusicLyricsLayout { get; set; } = MusicLyricsLayout.Stacked;
+    public MusicLyricsLayout MusicLyricsLayout { get; set; } = MusicLyricsLayout.Columns;
     public MusicLyricsAlign MusicLyricsAlign { get; set; } = MusicLyricsAlign.Left;
     // What dragging with the left button over the expanded music page does in each direction, and a two-finger touchpad swipe
     // to either side (MusicGestures). A number not listed does nothing.
@@ -957,7 +957,7 @@ public sealed class DeckSettings
         CompactMonitor = Core.CompactMonitor.Preset(CompactReadings) ?? CompactMonitorMode.Custom;
         CompactMonitorItems = Core.CompactMonitor.Shown(CompactReadings);
         if (!Enum.IsDefined(MusicText)) MusicText = CompactMusicText.None;
-        if (!Enum.IsDefined(MusicLyricsLayout)) MusicLyricsLayout = MusicLyricsLayout.Stacked;
+        if (!Enum.IsDefined(MusicLyricsLayout)) MusicLyricsLayout = MusicLyricsLayout.Columns;
         if (!Enum.IsDefined(MusicLyricsAlign)) MusicLyricsAlign = MusicLyricsAlign.Left;
         if (!Enum.IsDefined(ClockStyle)) ClockStyle = ClockStyle.Minimal;
         if (!Enum.IsDefined(ClockColor)) ClockColor = ClockColor.White;
