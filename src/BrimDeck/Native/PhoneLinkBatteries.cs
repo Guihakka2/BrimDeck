@@ -80,9 +80,14 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
         if (PhoneLinkCard.IsCurrent(stamp, _stamp, force)) return;
         string json;
         // Another app's file, replaced as it is read: a read that fails says nothing about the phone, so the reading on
-        // hand stands and the next tick reads the card again.
+        // hand stands and the next tick reads the card again. It stands no longer than a reading may, though: the card was
+        // rewritten, so a reading kept from a card past MaximumAge describes a phone that is no longer there.
         try { json = File.ReadAllText(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (_stamp is { } read && PhoneLinkCard.Expired(DateTime.UtcNow - read)) Clear(null);
+            return;
+        }
         if (PhoneLinkCard.Parse(json) is not { } phone) { Clear(stamp); return; }
         _stamp = stamp;
         _reported = true;

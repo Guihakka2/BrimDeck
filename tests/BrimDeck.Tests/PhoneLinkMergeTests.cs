@@ -36,6 +36,12 @@ static class PhoneLinkMergeTests
         check("Phone Link: Bluetooth alone lists the phone", roster.All is { Count: 1 } one && one[0].Source == DeviceSource.Bluetooth);
         roster.Set(DeviceSource.PhoneLink, [linked]);
         check("Phone Link: its reading takes the page over", roster.All is { Count: 1 } two && two[0].Source == DeviceSource.PhoneLink);
+        // Bluetooth stops listing the phone while Phone Link still reports it (the app reaches it over Wi-Fi as well): the
+        // key the settings remember stays.
+        roster.Set(DeviceSource.Bluetooth, []);
+        check("Phone Link: the key holds after Bluetooth stops listing the phone",
+            roster.All is { Count: 1 } kept && kept[0].Key == "bt:AABBCCDDEEFF" && kept[0].Source == DeviceSource.PhoneLink);
+        roster.Set(DeviceSource.Bluetooth, [bluetooth]);
         roster.Set(DeviceSource.PhoneLink, []);
         check("Phone Link: closed, the Bluetooth entry returns", roster.All is { Count: 1 } three && three[0].Source == DeviceSource.Bluetooth);
 

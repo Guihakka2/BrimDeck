@@ -297,19 +297,22 @@ public static class Devices
 public sealed class DeviceRoster
 {
     private readonly Dictionary<DeviceSource, IReadOnlyList<DeviceBattery>> _sources = [];
+    // The address each phone was last seen with, by name: Phone Link may keep a phone while Bluetooth stops listing it (the
+    // app reaches it over Wi-Fi), and the entry keeps the key the settings remember.
+    private readonly Dictionary<string, string> _addresses = new(StringComparer.Ordinal);
     public IReadOnlyList<DeviceBattery> All { get; private set; } = [];
 
     // Returns whether the merged list changed.
     public bool Set(DeviceSource source, IReadOnlyList<DeviceBattery> devices)
     {
         if (devices.Count == 0) _sources.Remove(source); else _sources[source] = devices;
-        var merged = Merge(_sources.Values.SelectMany(list => list));
+        var merged = Merge(_sources.Values.SelectMany(list => list), _addresses);
         bool changed = merged.Count != All.Count || merged.Where((device, i) => !device.Same(All[i])).Any();
         All = merged;
         return changed;
     }
 
-    public void Clear() { _sources.Clear(); All = []; }
+    public void Clear() { _sources.Clear(); _addresses.Clear(); All = []; }
 
     // One source's own list, before merging.
     public IReadOnlyList<DeviceBattery> Of(DeviceSource source) => _sources.TryGetValue(source, out var list) ? list : [];
@@ -318,14 +321,15 @@ public sealed class DeviceRoster
     // make one). Then a controller without an address (Windows.Gaming.Input, a PlayStation controller's HID) joins one with an
     // address by its vendor and product, but only where that vendor and product is one entry on either side, so two controllers
     // of one model stay two.
-    public static List<DeviceBattery> Merge(IEnumerable<DeviceBattery> devices)
+    public static List<DeviceBattery> Merge(IEnumerable<DeviceBattery> devices, IDictionary<string, string>? seen = null)
     {
         var list = devices.ToList();
         // Phone Link is the primary reading for a phone: while it reports one, the Bluetooth entry of that phone is left
         // out, so the page shows one phone with the fresher reading and its charging state. Its address goes to the Phone
         // Link entry first, so the merged key stays "bt:<address>" and the name, colors and hidden state the settings
-        // remember still find the phone. With no Phone Link reading (the app closed, the phone away) the Bluetooth entry
-        // stands in unchanged; a phone it does not name is kept.
+        // remember still find the phone; once Bluetooth has stopped listing the phone, the address it was last seen with
+        // stands in, since Phone Link reaches it over Wi-Fi as well. With no Phone Link reading (the app closed, the phone
+        // away) the Bluetooth entry stands in unchanged; a phone it does not name is kept.
         var linked = list.Where(device => device.Source == DeviceSource.PhoneLink && device.Kind == DeviceKind.Phone).ToList();
         if (linked.Count > 0)
         {
@@ -335,13 +339,15 @@ public sealed class DeviceRoster
             {
                 var bluetooth = list.FirstOrDefault(device => device.Source == DeviceSource.Bluetooth && device.Kind == DeviceKind.Phone
                     && device.Address is not null && !dropped.Contains(device) && Devices.SamePhone(phone.Name, device.Name));
-                if (bluetooth is null) continue;
-                dropped.Add(bluetooth);
-                carries[phone] = bluetooth.Address!;
+                if (bluetooth is not null) dropped.Add(bluetooth);
+                if ((bluetooth?.Address ?? Seen(seen, phone.Name)) is not { } address) continue;
+                carries[phone] = address;
+                if (seen is not null) seen[phone.Name] = address;
             }
             if (dropped.Count > 0)
-                list = list.Where(device => !dropped.Contains(device))
-                    .Select(device => carries.TryGetValue(device, out var address) ? device with { Address = address } : device).ToList();
+                list = list.Where(device => !dropped.Contains(device)).ToList();
+            if (carries.Count > 0)
+                list = list.Select(device => carries.TryGetValue(device, out var address) ? device with { Address = address } : device).ToList();
         }
         var parent = Enumerable.Range(0, list.Count).ToArray();
         int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
@@ -373,6 +379,10 @@ public sealed class DeviceRoster
         result.Sort(Devices.Order);
         return result;
     }
+
+    // The address a phone was last seen with, by a name that still names the same phone (a model suffix aside).
+    private static string? Seen(IDictionary<string, string>? seen, string name)
+        => seen?.FirstOrDefault(pair => Devices.SamePhone(name, pair.Key)).Value;
 }
 
 // The devices page's layout, in steps as the monitor page's: the type and the rings change only from one step to the next, never
