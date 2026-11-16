@@ -98,6 +98,13 @@ internal sealed class ShelfService : IDisposable
         if (_settings().ClipboardKeepHistory || entry.Kind == ClipKind.Image || Data.Kept(entry)) QueueSave();
     }
 
+    internal void AcceptRemoteText(string text, string source)
+    {
+        Clipboard.SetText(text);
+        _watch?.IgnoreCurrent();
+        if (_settings().ClipboardRecord) Copied(new ClipCopy(text, "", "", null, 0, 0, source));
+    }
+
     // The history kept past an exit that has grown older than its length goes (Shelf.Expired).
     private void Expire(bool raise)
     {
