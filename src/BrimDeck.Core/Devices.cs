@@ -288,6 +288,16 @@ public static class Devices
         foreach (var c in name) if (char.IsLetterOrDigit(c)) builder.Append(char.ToLowerInvariant(c));
         return builder.ToString();
     }
+
+    // The name a phone is known by, without the suffixes that only name its link: a phone seen as "Xiaomi 13 Ultra",
+    // "Xiaomi 13 Ultra 5G" and "Xiaomi 13 Ultra LTE" keeps one identity, so the address it was seen with does too.
+    internal static string PhoneIdentity(string? name)
+    {
+        var key = PhoneName(name);
+        foreach (var suffix in PhoneSuffixes)
+            if (key.Length > suffix.Length && key.EndsWith(suffix, StringComparison.Ordinal)) return key[..^suffix.Length];
+        return key;
+    }
 }
 
 // The devices of every source as one list. Each source hands over its whole current list (Set); entries of several sources
@@ -340,16 +350,10 @@ public sealed class DeviceRoster
                 var bluetooth = list.FirstOrDefault(device => device.Source == DeviceSource.Bluetooth && device.Kind == DeviceKind.Phone
                     && device.Address is not null && !dropped.Contains(device) && Devices.SamePhone(phone.Name, device.Name));
                 if (bluetooth is not null) dropped.Add(bluetooth);
-                if ((bluetooth?.Address ?? Seen(seen, phone.Name)) is not { } address) continue;
+                if ((bluetooth?.Address ?? Seen(seen, Devices.PhoneIdentity(phone.Name))) is not { } address) continue;
                 carries[phone] = address;
-                // One address per phone, under one name: a name that only adds a model suffix replaces the association kept
-                // before, so the next merge cannot find the older address first.
-                if (seen is not null)
-                {
-                    foreach (var stale in seen.Keys.Where(key => key != phone.Name && Devices.SamePhone(phone.Name, key)).ToList())
-                        seen.Remove(stale);
-                    seen[phone.Name] = address;
-                }
+                // One address per phone, whatever suffix the name carries this time: the identity, not the name, is the key.
+                if (seen is not null) seen[Devices.PhoneIdentity(phone.Name)] = address;
             }
             if (dropped.Count > 0)
                 list = list.Where(device => !dropped.Contains(device)).ToList();
@@ -387,9 +391,9 @@ public sealed class DeviceRoster
         return result;
     }
 
-    // The address a phone was last seen with, by a name that still names the same phone (a model suffix aside).
-    private static string? Seen(IDictionary<string, string>? seen, string name)
-        => seen?.FirstOrDefault(pair => Devices.SamePhone(name, pair.Key)).Value;
+    // The address a phone was last seen with, by the identity its names share ("Xiaomi 13 Ultra 5G" is "Xiaomi 13 Ultra").
+    private static string? Seen(IDictionary<string, string>? seen, string identity)
+        => seen is not null && seen.TryGetValue(identity, out var address) ? address : null;
 }
 
 // The devices page's layout, in steps as the monitor page's: the type and the rings change only from one step to the next, never

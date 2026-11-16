@@ -56,6 +56,16 @@ static class PhoneLinkMergeTests
         check("Phone Link: the newer address wins over the older name",
             renamed.All is { Count: 1 } latest && latest[0].Key == "bt:112233445566");
 
+        // The suffix Phone Link shows can change while Bluetooth stays away: one identity, one address, one key.
+        var suffixed = new DeviceRoster();
+        suffixed.Set(DeviceSource.PhoneLink, [Link(70)]);
+        suffixed.Set(DeviceSource.Bluetooth, [Bt("AABBCCDDEEFF", "Xiaomi 13 Ultra", 70)]);
+        suffixed.Set(DeviceSource.Bluetooth, []);
+        suffixed.Set(DeviceSource.PhoneLink, [Link(70, "Xiaomi 13 Ultra 5G")]);
+        suffixed.Set(DeviceSource.PhoneLink, [Link(70, "Xiaomi 13 Ultra LTE")]);
+        check("Phone Link: a changing suffix keeps the key while Bluetooth is away",
+            suffixed.All is { Count: 1 } same && same[0].Key == "bt:AABBCCDDEEFF");
+
         check("Phone Link: names match across case, spaces and a suffix",
             Devices.SamePhone("Xiaomi 13 Ultra", "XIAOMI 13 ultra") && Devices.SamePhone("Xiaomi 13 Ultra", "Xiaomi 13 Ultra 5G")
             && !Devices.SamePhone("Pixel 8", "iPhone 15") && !Devices.SamePhone("", "Pixel 8") && !Devices.SamePhone(null, null));
