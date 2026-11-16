@@ -484,7 +484,17 @@ public partial class App : Application
     // The settings' devices page lists what is connected, so it reads the devices while it is open.
     private bool _deviceSettings;
     internal void WatchDevicesForSettings(bool open) { _deviceSettings = open; UpdateDeviceDemand(); }
-    private void DeviceBatteriesChanged() => DevicesChanged?.Invoke();
+    private void DeviceBatteriesChanged()
+    {
+        if (Devices is { } devices && Settings.DeviceChoices.Count > 0 && DeviceLists.Adopt(devices.All, Settings.DeviceChoices) is { } adopted)
+        {
+            Settings.DeviceChoices = adopted;
+            _profileSettings.Clear();
+            DeviceReadSwitches.Use(Settings.DeviceChoices);
+            QueueSave();
+        }
+        DevicesChanged?.Invoke();
+    }
     // Temperatures and drives are read for an open page with them on; also for a collapsed row showing them: the processor's and
     // the graphics adapter's temperatures for a ring showing its own, the drives for the drive reading, and their temperatures when
     // it shows those. The processor's and the adapter's temperatures also while the row is only hidden for now, as long as the sampler

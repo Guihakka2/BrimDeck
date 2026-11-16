@@ -656,7 +656,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 bool charging = model.Charging && RazerQuery(device, model, Razer.ChargingState) is { } state && state != 0;
                 foreach (var each in collections) claimed.Add(each.Path);
                 yield return new DeviceBattery(Key("razer", info), model.Name, model.Kind, DeviceSource.Razer, Razer.Percent(battery.Value))
-                { Charging = charging, Hardware = Devices.Hardware(info.Vendor, info.Product) };
+                { Charging = charging, Hardware = Devices.Hardware(info.Vendor, info.Product), Address = AddressOf(info) };
                 yield break;
             }
         }
@@ -707,7 +707,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 charging |= Hid.Transact<object>(listeners, () => Send(second), r => Headsets.Charging(kind, r) is { } state ? state : null, wait) is true;
             claimed.Add(info.Path);
             return [new DeviceBattery(Key("headset", info), NameOf(info, Headsets.Name(kind)), DeviceKind.Headphones, Headsets.Source(kind), battery.Percent)
-                { Charging = charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) }];
+                { Charging = charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product), Address = AddressOf(info) }];
         }
         finally { foreach (var other in listeners.Skip(1)) other.Dispose(); }
     }

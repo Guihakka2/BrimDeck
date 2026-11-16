@@ -732,33 +732,39 @@ public partial class MainWindow : Window
         RenderCompact(); RenderUsage();
     }
 
+    private bool _inRenderCompact;
     // The compact island shows one ring per enabled application: the highest used share among its quotas.
     internal void RenderCompact()
     {
-        var fade = RowFadeStart();
-        CompactRings.Children.Clear(); CompactAlert.Children.Clear();
-        CompactRings.HorizontalAlignment = HorizontalAlignment.Center;
-        if (_quotaCarousel is not null) { _quotaElapsed = _quotaCarousel.Elapsed; _quotaCarousel.SetRunning(false, false); }
-        if (_stripCarousel is not null) { _stripElapsed = _stripCarousel.Elapsed; _stripCarousel.SetRunning(false, false); }
-        if (_columnCarousel is not null) { _columnElapsed = _columnCarousel.Elapsed; _columnCarousel.SetRunning(false, false); }
-        if (_columnReadings.Count > 0) _stripElapsed = _columnReadings[0].Elapsed;
-        foreach (var reading in _columnReadings) reading.SetRunning(false, false);
-        _compactEqualizer = null; _compactMarquee = null; _quotaCarousel = null; _stripCarousel = null; _compactClock = null; _compactStrip = null;
-        _columnCarousel = null; _columnReadings.Clear(); _columnStrips.Clear();
-        if (_alert is not null)
+        _inRenderCompact = true;
+        try
         {
-            CompactAlert.Visibility = Visibility.Visible; CompactRings.Visibility = Visibility.Collapsed;
-            // LayoutCompactAlert (MainWindow.CompactLayout.cs) builds the alert row from _alert and sizes it for the shape.
+            var fade = RowFadeStart();
+            CompactRings.Children.Clear(); CompactAlert.Children.Clear();
+            CompactRings.HorizontalAlignment = HorizontalAlignment.Center;
+            if (_quotaCarousel is not null) { _quotaElapsed = _quotaCarousel.Elapsed; _quotaCarousel.SetRunning(false, false); }
+            if (_stripCarousel is not null) { _stripElapsed = _stripCarousel.Elapsed; _stripCarousel.SetRunning(false, false); }
+            if (_columnCarousel is not null) { _columnElapsed = _columnCarousel.Elapsed; _columnCarousel.SetRunning(false, false); }
+            if (_columnReadings.Count > 0) _stripElapsed = _columnReadings[0].Elapsed;
+            foreach (var reading in _columnReadings) reading.SetRunning(false, false);
+            _compactEqualizer = null; _compactMarquee = null; _quotaCarousel = null; _stripCarousel = null; _compactClock = null; _compactStrip = null;
+            _columnCarousel = null; _columnReadings.Clear(); _columnStrips.Clear();
+            if (_alert is not null)
+            {
+                CompactAlert.Visibility = Visibility.Visible; CompactRings.Visibility = Visibility.Collapsed;
+                // LayoutCompactAlert (MainWindow.CompactLayout.cs) builds the alert row from _alert and sizes it for the shape.
+                ApplyCollapsedLayout();
+                // The notice hides the system readings, which then need none.
+                UpdateMonitorDemand();
+                return;
+            }
+            CompactAlert.Visibility = Visibility.Collapsed; CompactRings.Visibility = Visibility.Visible;
+            // A notch on a side edge stands its content in a column (MainWindow.CompactColumn.cs).
+            if (CompactColumnMode) RenderCompactColumn(); else RenderCompactMusic();
             ApplyCollapsedLayout();
-            // The notice hides the system readings, which then need none.
-            UpdateMonitorDemand();
-            return;
+            RowFadeRun(fade);
         }
-        CompactAlert.Visibility = Visibility.Collapsed; CompactRings.Visibility = Visibility.Visible;
-        // A notch on a side edge stands its content in a column (MainWindow.CompactColumn.cs).
-        if (CompactColumnMode) RenderCompactColumn(); else RenderCompactMusic();
-        ApplyCollapsedLayout();
-        RowFadeRun(fade);
+        finally { _inRenderCompact = false; }
     }
 
     private void DetectThresholds()
