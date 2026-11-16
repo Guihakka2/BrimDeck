@@ -125,7 +125,7 @@ public partial class MainWindow : Window
     {
         _app = app; _lead = lead;
         _host = new WindowsHost(() => MonitorHandle, () => new WindowInteropHelper(this).Handle, IslandStrip,
-            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove);
+            () => Settings.ForceTopmost, () => Settings.BackgroundWindows, () => KeepsAbove, OccupiedArea);
         UpdateCollapsedGeometry();
         _hover = new(Dispatcher, () =>
         {
@@ -253,6 +253,21 @@ public partial class MainWindow : Window
         if (!IsVisible || PresentationSource.FromVisual(this) is null || PresentationSource.FromVisual(Island) is null) return null;
         if (!(Island.ActualWidth > 0) || !(Island.ActualHeight > 0)) return null;
         return new Rect(Island.PointToScreen(new Point(0, 0)), Island.PointToScreen(new Point(Island.ActualWidth, Island.ActualHeight)));
+    }
+    // The place the collapsed panel takes in its own style, in screen physical pixels: a window that overlaps it calls for the
+    // Occupied rule (DeckSettings.Occupied). Null while that rule keeps the style. The place is kept from the last time the panel
+    // had its own style, so that the indicator's smaller place does not let the window go and bring the panel back at once.
+    private Rect? _ownArea;
+    private Rect? OccupiedArea()
+    {
+        if (Settings.Occupied == WindowBehavior.Normal) return null;
+        if (Collapsed.Style == Settings.Style && _pixelsPerDip > 0 && Collapsed.Surface.Width > 0 && Collapsed.Surface.Height > 0)
+        {
+            var r = _frame.ToScreen(Collapsed.Surface);
+            _ownArea = new Rect((MonitorBoundsDip.X + r.X) * _pixelsPerDip, (MonitorBoundsDip.Y + r.Y) * _pixelsPerDip,
+                r.Width * _pixelsPerDip, r.Height * _pixelsPerDip);
+        }
+        return _ownArea;
     }
     // The island with room for its resize grips beside it (they reach up to about 22 DIP past its ends) while the pointer is near
     // it or a resize runs, in screen physical pixels: what the taskbar mirror shows. Away from the pointer the island alone, so

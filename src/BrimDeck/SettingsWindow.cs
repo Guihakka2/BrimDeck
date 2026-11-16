@@ -649,7 +649,7 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         {
             switch(_page)
             {
-                case 0:s.LaunchAtStartup=false;s.ShowTrayIcon=defaults.ShowTrayIcon;s.MemoryMode=defaults.MemoryMode;s.Theme=defaults.Theme;s.Language=Loc.SystemLanguage();s.OpenDelay=defaults.OpenDelay;s.ClickToExpand=defaults.ClickToExpand;s.CloseDelay=defaults.CloseDelay;s.Animations=defaults.Animations;s.AnimationDuration=defaults.AnimationDuration;s.AlwaysOnTop=defaults.AlwaysOnTop;s.ForceTopmost=defaults.ForceTopmost;s.Maximized=defaults.Maximized;s.Borderless=defaults.Borderless;s.Exclusive=defaults.Exclusive;s.FullscreenRules=[];s.PanelScale=defaults.PanelScale;s.SurfaceTransparency=defaults.SurfaceTransparency;s.UiFont=defaults.UiFont;s.SettingsFollowsFont=defaults.SettingsFollowsFont;
+                case 0:s.LaunchAtStartup=false;s.ShowTrayIcon=defaults.ShowTrayIcon;s.MemoryMode=defaults.MemoryMode;s.Theme=defaults.Theme;s.Language=Loc.SystemLanguage();s.OpenDelay=defaults.OpenDelay;s.ClickToExpand=defaults.ClickToExpand;s.CloseDelay=defaults.CloseDelay;s.Animations=defaults.Animations;s.AnimationDuration=defaults.AnimationDuration;s.AlwaysOnTop=defaults.AlwaysOnTop;s.ForceTopmost=defaults.ForceTopmost;s.Maximized=defaults.Maximized;s.Borderless=defaults.Borderless;s.Exclusive=defaults.Exclusive;s.Occupied=defaults.Occupied;s.FullscreenRules=[];s.PanelScale=defaults.PanelScale;s.SurfaceTransparency=defaults.SurfaceTransparency;s.UiFont=defaults.UiFont;s.SettingsFollowsFont=defaults.SettingsFollowsFont;
                     s.ClickThrough=defaults.ClickThrough;s.ClickThroughPanel=defaults.ClickThroughPanel;s.ClickThroughKeyboard=defaults.ClickThroughKeyboard;s.WindowCapture=defaults.WindowCapture;break;
                 case HotkeysPage:foreach(var kind in Enum.GetValues<HotkeyKind>())s.SetHotkey(kind,defaults.Hotkey(kind));break;
                 case 1:s.Style=defaults.Style;s.NotchSummary=defaults.NotchSummary;s.NotchMusic=defaults.NotchMusic;s.CapsuleSummary=defaults.CapsuleSummary;s.CapsuleMusic=defaults.CapsuleMusic;s.MusicIndicatorProgress=defaults.MusicIndicatorProgress;
@@ -729,9 +729,12 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
             BehaviorRow(Loc.T("有窗口最大化时", "When a window is maximized"), S.Maximized, value => Change(s => s.Maximized = value)),
             BehaviorRow(Loc.T("有应用处于无边框全屏时", "When an app is in borderless full screen"), S.Borderless, value => Change(s => s.Borderless = value)),
             BehaviorRow(Loc.T("有应用处于独占全屏时", "When an app is in exclusive full screen"), S.Exclusive, value => Change(s => s.Exclusive = value)),
+            BehaviorRow(Loc.T("有窗口与 BrimDeck 重叠时", "When a window overlaps BrimDeck"), S.Occupied, value => Change(s => s.Occupied = value),
+                Loc.T("BrimDeck 收起时，有窗口移到它所在的位置就生效，移开后恢复。最大化和全屏窗口按上面的规则处理。",
+                    "Applies when a window is moved onto the collapsed BrimDeck, and ends when it is moved away. Maximized and full-screen windows follow the rules above.")),
             Toggle(Loc.T("同时检测后方窗口", "Also check windows behind"), S.BackgroundWindows, value => Change(s => s.BackgroundWindows = value),
-                help: Loc.T("开启后，正在使用的窗口后方有窗口最大化或无边框全屏时，也按上面对应的规则处理。关闭后只检测正在使用的窗口。",
-                    "When on, a maximized or borderless full-screen window behind the window you are using also follows the matching rule above. When off, only the window you are using is checked.")),
+                help: Loc.T("开启后，正在使用的窗口后方有窗口最大化、无边框全屏或与收起的 BrimDeck 重叠时，也按上面对应的规则处理。关闭后只检测正在使用的窗口。",
+                    "When on, a window behind the window you are using that is maximized, in borderless full screen or overlapping the collapsed BrimDeck also follows the matching rule above. When off, only the window you are using is checked.")),
             ExceptionsRow()
         })
         {
@@ -1317,7 +1320,7 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
             "Where the panel opens when hovered, if the notch or capsule is wider than the expanded panel."));
     }
 
-    private FrameworkElement BehaviorRow(string title, WindowBehavior selected, Action<WindowBehavior> changed)
+    private FrameworkElement BehaviorRow(string title, WindowBehavior selected, Action<WindowBehavior> changed, string? help = null)
     {
         var options = new UniformGrid { Columns = 3, Width = 324 };
         foreach (var behavior in Enum.GetValues<WindowBehavior>())
@@ -1325,6 +1328,6 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
             var option = new RadioButton { Content = BehaviorName(behavior), Style = (Style)FindResource("SettingsSegment"), GroupName = "Behavior" + title, IsChecked = selected == behavior };
             AutomationProperties.SetName(option, title + " · " + BehaviorName(behavior)); option.Checked += (_, _) => changed(behavior); options.Children.Add(option);
         }
-        return Row(title, SegmentBorder(options));
+        return help is null ? Row(title, SegmentBorder(options)) : Row(title, SegmentBorder(options), help: () => help);
     }
 }
