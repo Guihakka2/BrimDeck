@@ -8,6 +8,9 @@ using BrimDeck.Core.ClipboardSync;
 
 namespace BrimDeck.Native;
 
+internal sealed class DoubaoSignInWindowClosedException()
+    : IOException(Loc.T("登录窗口已关闭，可以重新登录。", "The sign-in window closed. You can try again."));
+
 // A dedicated profile in the installed browser, as used by MiMoAccount. No installed IME
 // or normal browser profile is inspected, and no browser runtime is distributed.
 internal static class DoubaoBrowserLogin
@@ -30,7 +33,7 @@ internal static class DoubaoBrowserLogin
             var portWait = Stopwatch.StartNew(); Uri? socket = null;
             while (socket is null)
             {
-                if (process.HasExited) throw new IOException(Loc.T("登录窗口已关闭。", "Sign-in window closed."));
+                if (process.HasExited) throw new DoubaoSignInWindowClosedException();
                 if (portWait.Elapsed > TimeSpan.FromSeconds(30)) throw new IOException(Loc.T("无法连接登录窗口，请重试。", "Cannot connect to the sign-in window. Retry."));
                 try
                 {
@@ -47,6 +50,7 @@ internal static class DoubaoBrowserLogin
             for (int id = 1; ; id++)
             {
                 await Task.Delay(1500, deadline.Token);
+                if (process.HasExited) throw new DoubaoSignInWindowClosedException();
                 var response = await CallAsync(client, id, "Storage.getCookies", deadline.Token);
                 var identity = new DoubaoIdentity { DeviceId = service.Accounts.DoubaoDeviceId, DeviceName = service.Accounts.DeviceName };
                 foreach (var cookie in response.GetProperty("cookies").EnumerateArray())
@@ -70,11 +74,21 @@ internal static class DoubaoBrowserLogin
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         { throw new TimeoutException(Loc.T("登录等待超时，请重试。", "Sign-in timed out. Retry.")); }
+        catch (WebSocketException) when (process is { HasExited: true })
+        { throw new DoubaoSignInWindowClosedException(); }
         finally
         {
             // This process belongs to the random profile created above; never terminate the user's ordinary browser.
-            try { if (process is { HasExited: false }) { process.Kill(true); await process.WaitForExitAsync(CancellationToken.None); } }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            try
+            {
+                if (process is { HasExited: false })
+                {
+                    process.Kill(true);
+                    using var cleanupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await process.WaitForExitAsync(cleanupDeadline.Token);
+                }
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException) { }
             process?.Dispose();
             _ = CleanupAsync(root, profile);
         }
@@ -100,7 +114,8 @@ internal static class DoubaoBrowserLogin
             do
             {
                 part = await client.ReceiveAsync(buffer, timeout.Token);
-                if (part.MessageType != WebSocketMessageType.Text) throw new IOException(Loc.T("登录窗口已关闭。", "Sign-in window closed."));
+                if (part.MessageType == WebSocketMessageType.Close) throw new DoubaoSignInWindowClosedException();
+                if (part.MessageType != WebSocketMessageType.Text) throw new InvalidDataException("Invalid browser response.");
                 message.Write(buffer, 0, part.Count);
                 if (message.Length > 2 * 1024 * 1024) throw new InvalidDataException("Browser response too large.");
             } while (!part.EndOfMessage);

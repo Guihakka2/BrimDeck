@@ -74,6 +74,7 @@ internal sealed class ShelfService : IDisposable
 
     private void Copied(ClipCopy copy)
     {
+        if (BrimDeck.Core.ClipboardSync.LanClipboardLink.ContainsInvitation(copy.Text)) return;
         var now = DateTimeOffset.Now;
         ClipEntry entry;
         if (copy.Png is { } png)

@@ -149,7 +149,7 @@ public partial class App : Application
         ApplyTray();
         _settingsEvent = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
         _listener = ThreadPool.RegisterWaitForSingleObject(_settingsEvent, (_, _) => Dispatcher.BeginInvoke(ShowFromRelaunch), null, Timeout.Infinite, false);
-        if (e.Args.Contains("--settings")) OpenSettings();
+        if (e.Args.Contains("--settings") || ClipboardSync.TestMode) OpenSettings();
         // An update that kept this version says why on the About page.
         else if (Updates.RestartFailed) OpenUpdateSettings();
     }
