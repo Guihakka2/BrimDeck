@@ -231,7 +231,8 @@ public static class Razer
         if (bytes.Length != ReportLength || Checksum(bytes) != bytes[88] || bytes[6] != command.Class || bytes[7] != command.Id) return null;
         return (bytes[0], bytes[9]);
     }
-    public static int Percent(byte raw) => (raw * 100 + 127) / 255;
+    // Scaled as Razer's own web configurator (synapse.razer.com) does: Math.floor(raw / 255 * 100).
+    public static int Percent(byte raw) => raw * 100 / 255;
 
     // The catalog: the transaction id each model answers to, the interface to use, how long to wait between the request and the
     // reply (microseconds), and whether it reports charging. Values from razer-battery-report's catalog (derived from openrazer).

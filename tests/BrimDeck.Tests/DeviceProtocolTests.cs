@@ -77,7 +77,8 @@ static class DeviceProtocolTests
         check("Razer: the battery request as razer-battery-report encodes it", request.Length == 90 && request.Take(8).SequenceEqual(new byte[] { 0x00, 0x1F, 0x00, 0x00, 0x00, 0x02, 0x07, 0x80 })
             && request[88] == (0x02 ^ 0x07 ^ 0x80) && request[89] == 0 && request.Skip(8).Take(80).All(b => b == 0));
         var reply = Razer.Request(0x1F, Razer.Battery); reply[0] = Razer.Success; reply[9] = 0xFF; reply[88] = Razer.Checksum(reply);
-        check("Razer: a successful reply and its level", Razer.Reply(reply, Razer.Battery) == (Razer.Success, 0xFF) && Razer.Percent(0xFF) == 100 && Razer.Percent(0) == 0 && Razer.Percent(128) == 50);
+        check("Razer: a successful reply and its level", Razer.Reply(reply, Razer.Battery) == (Razer.Success, 0xFF) && Razer.Percent(0xFF) == 100 && Razer.Percent(0) == 0 && Razer.Percent(128) == 50
+            && Razer.Percent(152) == 59 && Razer.Percent(150) == 58);
         var garbled = (byte[])reply.Clone(); garbled[10] ^= 1;
         check("Razer: a bad checksum or another command is no reply", Razer.Reply(garbled, Razer.Battery) is null && Razer.Reply(reply, Razer.ChargingState) is null && Razer.Reply(reply[..89], Razer.Battery) is null);
         check("Razer: the catalog's models and transaction ids", Razer.Find(0x00C1) is { Transaction: 0x1F, Name: "Razer Viper V3 Pro" } && Razer.Find(0x007D) is { Transaction: 0x3F }
