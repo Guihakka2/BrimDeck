@@ -637,7 +637,7 @@ public sealed class DeckSettings
     // of the width in percent, set by dragging the divider between them or in the settings.
     public ShelfShown ShelfShown { get; set; } = ShelfShown.Both;
     public ShelfArrangement ShelfArrangement { get; set; } = ShelfArrangement.Split;
-    public bool ShelfSameSideStack { get; set; }
+    public bool ShelfSameSideStack { get; set; } = true;
     public double ShelfFileShare { get; set; } = ShelfLayout.DefaultShare;
     // Stacked, further ways to bring the card behind forward, besides a click on its side strip, on the title of the card in
     // front or on the page's own button: resting the pointer on the side strip, a middle click anywhere on the page, and a
