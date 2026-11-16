@@ -85,7 +85,13 @@ internal sealed class PhoneLinkBatteries(Dispatcher dispatcher, Action<DeviceSou
         try { json = File.ReadAllText(path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (_stamp is { } read && PhoneLinkCard.Expired(DateTime.UtcNow - read)) Clear(null);
+            // The reading kept is the one on hand, so its own age decides how long it stands: past Unverified it needs Phone
+            // Link running, past MaximumAge it goes whatever runs.
+            if (_stamp is { } held)
+            {
+                var kept = DateTime.UtcNow - held;
+                if (PhoneLinkCard.Expired(kept) || (PhoneLinkCard.NeedsLiveness(kept) && !Alive())) Clear(null);
+            }
             return;
         }
         if (PhoneLinkCard.Parse(json) is not { } phone) { Clear(stamp); return; }

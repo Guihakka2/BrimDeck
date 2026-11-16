@@ -342,7 +342,14 @@ public sealed class DeviceRoster
                 if (bluetooth is not null) dropped.Add(bluetooth);
                 if ((bluetooth?.Address ?? Seen(seen, phone.Name)) is not { } address) continue;
                 carries[phone] = address;
-                if (seen is not null) seen[phone.Name] = address;
+                // One address per phone, under one name: a name that only adds a model suffix replaces the association kept
+                // before, so the next merge cannot find the older address first.
+                if (seen is not null)
+                {
+                    foreach (var stale in seen.Keys.Where(key => key != phone.Name && Devices.SamePhone(phone.Name, key)).ToList())
+                        seen.Remove(stale);
+                    seen[phone.Name] = address;
+                }
             }
             if (dropped.Count > 0)
                 list = list.Where(device => !dropped.Contains(device)).ToList();

@@ -45,6 +45,17 @@ static class PhoneLinkMergeTests
         roster.Set(DeviceSource.PhoneLink, []);
         check("Phone Link: closed, the Bluetooth entry returns", roster.All is { Count: 1 } three && three[0].Source == DeviceSource.Bluetooth);
 
+        // Phone Link adds a model suffix to the name it shows, and the phone is paired again with another address: the
+        // newer address is the one kept, even after Bluetooth stops listing the phone.
+        var renamed = new DeviceRoster();
+        renamed.Set(DeviceSource.PhoneLink, [Link(70)]);
+        renamed.Set(DeviceSource.Bluetooth, [Bt("AABBCCDDEEFF", "Xiaomi 13 Ultra", 70)]);
+        renamed.Set(DeviceSource.PhoneLink, [Link(70, "Xiaomi 13 Ultra 5G")]);
+        renamed.Set(DeviceSource.Bluetooth, [Bt("112233445566", "Xiaomi 13 Ultra", 65)]);
+        renamed.Set(DeviceSource.Bluetooth, []);
+        check("Phone Link: the newer address wins over the older name",
+            renamed.All is { Count: 1 } latest && latest[0].Key == "bt:112233445566");
+
         check("Phone Link: names match across case, spaces and a suffix",
             Devices.SamePhone("Xiaomi 13 Ultra", "XIAOMI 13 ultra") && Devices.SamePhone("Xiaomi 13 Ultra", "Xiaomi 13 Ultra 5G")
             && !Devices.SamePhone("Pixel 8", "iPhone 15") && !Devices.SamePhone("", "Pixel 8") && !Devices.SamePhone(null, null));
