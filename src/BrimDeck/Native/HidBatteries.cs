@@ -192,7 +192,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     {
         string key = Key("push", info) + (kind == Pushes.Kind.SteamPuck ? ":" + info.Interface : "");
         return new DeviceBattery(key, name ?? Pushes.Name(kind, null), Pushes.KindOf(kind), Pushes.Source(kind), state.Percent)
-            { Charging = state.Charging, Coarse = state.Coarse, Asleep = state.Asleep, Hardware = Devices.Hardware(info.Vendor, info.Product) };
+            { Charging = state.Charging, Accuracy = state.Accuracy, Asleep = state.Asleep, Hardware = Devices.Hardware(info.Vendor, info.Product) };
     }
 
     // HID collections that come or go while the page shows wake the worker; the first listing (every collection there is) does not.
@@ -745,7 +745,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 charging |= Hid.Transact<object>(listeners, () => Send(second), r => Headsets.Charging(kind, r) is { } state ? state : null, wait) is true;
             claimed.Add(info.Path);
             return [new DeviceBattery(Key("headset", info), NameOf(info, Headsets.Name(kind)), DeviceKind.Headphones, Headsets.Source(kind), battery.Percent)
-                { Charging = charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product), Address = AddressOf(info) }];
+                { Charging = charging, Accuracy = battery.Accuracy, Hardware = Devices.Hardware(info.Vendor, info.Product), Address = AddressOf(info) }];
         }
         finally { foreach (var other in listeners.Skip(1)) other.Dispose(); }
     }
@@ -808,7 +808,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
     private static DeviceBattery Mouse(string prefix, HidInfo info, string fallback, BatteryRead battery, DeviceKind kind = DeviceKind.Mouse, string? preferredName = null)
         => new(Key(prefix, info), preferredName is { Length: > 0 } ? preferredName : NameOf(info, fallback),
             Devices.Named(info.ProductName) is { } named and not DeviceKind.Other ? named : kind, DeviceSource.Hid, battery.Percent)
-        { Charging = battery.Charging, Coarse = battery.Coarse, Asleep = battery.Asleep, Hardware = Devices.Hardware(info.Vendor, info.Product) };
+        { Charging = battery.Charging, Accuracy = battery.Accuracy, Asleep = battery.Asleep, Hardware = Devices.Hardware(info.Vendor, info.Product) };
 
     private static IEnumerable<DeviceBattery> BitMouse(HidInfo info, HashSet<string> claimed)
     {
@@ -1458,7 +1458,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 using var device = new HidDevice(info);
                 if (AskAsus(device, model) is not { } battery) continue;
                 found.Add(new DeviceBattery(Key("asus", info) + $":{model.Product:X4}", model.Name, Asus.Kind(model), DeviceSource.Hid, battery.Percent)
-                    { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) });
+                    { Charging = battery.Charging, Accuracy = battery.Accuracy, Hardware = Devices.Hardware(info.Vendor, info.Product) });
             }
             catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException or IOException) { }
         }
@@ -1597,7 +1597,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
                 if (channel.HeadsetRegister(index, 0x0D) is not { } battery) return Remembered(slot is { Legacy: true } ? slot : null);
                 string name = info.ProductName.Length > 0 ? info.ProductName : "Logitech G535";
                 var read = new DeviceBattery($"logitech:{info.Product:X4}:{index}", name, DeviceKind.Headphones, DeviceSource.Logitech, battery.Percent)
-                    { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) };
+                    { Charging = battery.Charging, Accuracy = battery.Accuracy, Hardware = Devices.Hardware(info.Vendor, info.Product) };
                 _known[slotKey] = new Slot { Key = read.Key, Name = name, Legacy = true, Last = read, LastAt = Environment.TickCount64 };
                 return read;
             }
@@ -1647,7 +1647,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         private static DeviceBattery Take(Slot slot, BatteryRead battery)
         {
             slot.Last = new DeviceBattery(slot.Key, slot.Name, slot.Kind != DeviceKind.Other ? slot.Kind : Devices.Named(slot.Name) ?? DeviceKind.Other, DeviceSource.Logitech, battery.Percent)
-            { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = slot.Hardware.Length > 0 ? slot.Hardware : null };
+            { Charging = battery.Charging, Accuracy = battery.Accuracy, Hardware = slot.Hardware.Length > 0 ? slot.Hardware : null };
             slot.LastAt = Environment.TickCount64;
             return slot.Last;
         }
@@ -1694,7 +1694,7 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
             if (read is not { } battery) return null;
             string name = index == 0xFF && info.ProductName.Length > 0 ? info.ProductName : "Logitech #" + index;
             return new DeviceBattery($"logitech:{info.Product:X4}:{index}", name, Devices.Named(name) ?? DeviceKind.Other, DeviceSource.Logitech, battery.Percent)
-            { Charging = battery.Charging, Coarse = battery.Coarse, Hardware = Devices.Hardware(info.Vendor, info.Product) };
+            { Charging = battery.Charging, Accuracy = battery.Accuracy, Hardware = Devices.Hardware(info.Vendor, info.Product) };
         }
 
         private sealed class HidppError(int code) : Exception($"HID++ error 0x{code:X2}") { public int Code { get; } = code; }
