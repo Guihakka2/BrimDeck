@@ -625,6 +625,8 @@ public sealed class DeckSettings
     public double ClipboardWidth { get; set; } = ShelfSizes.Default.Width;
     public double ClipboardHeight { get; set; } = ShelfSizes.Default.Height;
     public bool ClipboardRecord { get; set; } = true;
+    // On, a click on a clipboard entry only puts it on the clipboard, as "只复制，不粘贴" in its menu does; off, it pastes it.
+    public bool ClipboardClickCopyOnly { get; set; }
     public bool WeTypeClipboardSync { get; set; }
     public bool DoubaoClipboardSync { get; set; }
     public bool LanClipboardSync { get; set; }
