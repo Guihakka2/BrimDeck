@@ -511,7 +511,7 @@ public partial class MainWindow
         var privacy = Settings.NoticeRule(notice.AppKey)?.Privacy ?? Settings.NoticePrivacy;
         if (notice.Body.Length > 0 && privacy == NoticePrivacy.Full)
         {
-            var body = IslandNotice.Directed(new TextBlock { Text = shown.Body, FontFamily = UI.PanelFont, FontSize = group.Count > 1 ? 14 : 13, LineHeight = group.Count > 1 ? 22 : 21, Foreground = UI.Brush(UI.Primary), TextWrapping = TextWrapping.Wrap, Opacity = .9 });
+            var body = IslandNotice.Directed(new TextBlock { Text = shown.Body, FontFamily = UI.PanelFont, FontSize = group.Count > 1 ? 14 : 13, LineHeight = group.Count > 1 ? 22 : 21, Foreground = UI.Brush(UI.Primary), TextWrapping = TextWrapping.Wrap });
             if (shown.HasCode) AutomationProperties.SetName(body, shown.SpokenBody);
             words.Children.Add(body);
         }
