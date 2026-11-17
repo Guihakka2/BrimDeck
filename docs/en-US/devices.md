@@ -34,7 +34,7 @@ HID devices that carry the standard battery report are shown too.
 | --- | --- |
 | Logitech (through its receivers or cable) | Whole brand |
 | Razer, ASUS ROG | Known wireless models |
-| MCHOSE (K87S, G87 V2, K99 V3, G75 V2, G98 V3 and K87 V3 included), AULA (F87, F87 Pro, F99, F99 Pro, F75 and F108 Pro included), LINGBAO K98, KZZI (K75, I75, I98 and Z75 included), VGN (V108, V98 Pro V3, V87 V2, N75 V2, N87 and Neon75 included), ATK (Z87 Pro, S87, S99, TV88, TV99, TV108, V100, A87 Pro, A98 Pro, A87 Ultra and YOGO 75 included), CHERRY PIXIU75, Corsair (K65 PLUS, K57), Alienware Pro, URX Core75, Lofree Flow Lite84, MonsGeek, Akko, Epomaker (some TH series models and the G84 PRO included), AJAZZ AK870, CAROTMAS Mars68, GANSS, EWEADN X87, Teevolution, RK R98Pro V2, and other brands' receivers on the same platform as MonsGeek's | Known models |
+| MCHOSE (K87S, G87 V2, K99 V3, G75 V2, G98 V3 and K87 V3 included), AULA (F87, F87 Pro, F99, F99 Pro, F75 and F108 Pro included), LINGBAO K98, KZZI (K75, I75, I98 and Z75 included), VGN (V108, the V98 Pro V3 over its cable and 2.4 GHz, V87 V2, N75 V2, N87 and Neon75 included), ATK (Z87 Pro, S87, S99, TV88, TV99, TV108, V100, A87 Pro, A98 Pro, A87 Ultra and YOGO 75 included), CHERRY PIXIU75, Corsair (K65 PLUS, K57), Alienware Pro, URX Core75, Lofree Flow Lite84, MonsGeek, Akko, Epomaker (some TH series models and the G84 PRO included), AJAZZ AK870, CAROTMAS Mars68, GANSS, EWEADN X87, Teevolution, RK R98Pro V2, and other brands' receivers on the same platform as MonsGeek's | Known models |
 
 **Headsets**
 
