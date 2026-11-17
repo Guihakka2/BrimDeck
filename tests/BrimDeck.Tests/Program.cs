@@ -138,13 +138,19 @@ try
     var priceDirectory = Path.Combine(root, "prices");
     using var pricing = new Pricing(priceDirectory, priceClient, () => priceTime);
     await pricing.RefreshAsync();
-    Check("Live catalog loaded without credentials", pricing.ModelCount == 4 && handler.Calls == 1 && !handler.SawAuthorization);
+    Check("Live catalog loaded without credentials", pricing.ModelCount >= 4 && handler.Calls == 1 && !handler.SawAuthorization);
     await pricing.RefreshAsync();
     Check("Catalog refresh is throttled within 24 hours", handler.Calls == 1);
     Check("Provider-qualified model and Claude version aliases match", pricing.Find("claude-fable-5-1")?.Model == "anthropic/claude-fable-5.1" && pricing.Find("openai/gpt-6-astra") is not null);
+    // DeepSeek's own yuan prices, which the catalog lacks: peak hours cost twice the off-peak hours.
+    var peakEntry = new TokenEntry("dsh:peak", DateTimeOffset.Parse("2026-11-04T02:00:00Z"), "deepseek-flash", 1_000_000, 1_000_000, 0, 0, 1_000_000);
+    var offPeakEntry = peakEntry with { Key = "dsh:offpeak", Time = DateTimeOffset.Parse("2026-11-04T12:00:00Z") };
+    Check("DeepSeek's yuan prices are built in, at the peak-hour price", pricing.Find("deepseek-flash") is { Currency: "CNY" } && pricing.Estimate(peakEntry) == 10.04m);
+    Check("A DeepSeek record outside peak hours takes the off-peak price", pricing.Estimate(offPeakEntry) == 5.02m);
+    Check("A cost summary names the yuan the DeepSeek prices are in", pricing.Summarize([peakEntry]) is { Currency: "CNY" } summary && summary.Amount == 10.04m);
     using (var cached = new Pricing(priceDirectory, priceClient, () => priceTime))
     {
-        Check("Downloaded catalog survives restart", cached.ModelCount == 4 && cached.UpdatedAt == pricing.UpdatedAt);
+        Check("Downloaded catalog survives restart", cached.ModelCount >= 4 && cached.UpdatedAt == pricing.UpdatedAt);
         await cached.RefreshAsync();
         Check("Restart with a fresh cache sends no request", handler.Calls == 1);
     }
@@ -771,10 +777,10 @@ try
     priceTime = priceTime.AddSeconds(1);
     await pricing.RefreshAsync();
     Check("Price changes update without a new build", handler.Calls == 2 && pricing.Find("claude-sonnet-4-5")?.Prices.Input == .000004m);
-    Check("New remote models require no local list update", pricing.ModelCount == 5 && pricing.Find("new-catalog-model") is not null);
+    Check("New remote models require no local list update", pricing.ModelCount >= 5 && pricing.Find("new-catalog-model") is not null);
     handler.Fail = true;
     await pricing.RefreshAsync(true);
-    Check("Network failure keeps last successful catalog", pricing.ModelCount == 5 && pricing.LastError is not null && pricing.Find("claude-sonnet-4-5")?.Prices.Input == .000004m);
+    Check("Network failure keeps last successful catalog", pricing.ModelCount >= 5 && pricing.LastError is not null && pricing.Find("claude-sonnet-4-5")?.Prices.Input == .000004m);
     await pricing.RefreshAsync();
     Check("Network failure does not trigger an immediate catalog retry", handler.Calls == 3);
     priceTime = priceTime.AddMinutes(6); handler.Fail = false;
@@ -786,11 +792,12 @@ try
     var cacheBefore = File.ReadAllText(Path.Combine(priceDirectory, "model-prices.json"));
     handler.Json = "{\"data\":[]}";
     await pricing.RefreshAsync(true);
-    Check("Empty remote response cannot erase valid prices", pricing.ModelCount == 5 && File.ReadAllText(Path.Combine(priceDirectory, "model-prices.json")) == cacheBefore);
+    Check("Empty remote response cannot erase valid prices", pricing.ModelCount >= 5 && File.ReadAllText(Path.Combine(priceDirectory, "model-prices.json")) == cacheBefore);
     using (var missing = new Pricing(Path.Combine(root, "no-cache"), priceClient, () => priceTime))
     {
         await missing.RefreshAsync();
-        Check("Offline first start has no invented prices", missing.ModelCount == 0 && missing.Estimate(entry) is null && missing.LastError is not null);
+        Check("Offline first start has no catalog prices, only the built-in DeepSeek ones",
+            missing.ModelCount >= 1 && missing.Find("deepseek-flash") is { Currency: "CNY" } && missing.LastError is not null && missing.Estimate(entry) is null);
         Check("Reported costs do not depend on catalog availability", missing.Estimate(eventItem!) == .0345131m);
     }
 
