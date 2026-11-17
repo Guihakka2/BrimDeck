@@ -4,15 +4,23 @@ using System.Text.RegularExpressions;
 
 namespace BrimDeck.Core;
 
-// Prices are USD per token, exactly as returned by the remote catalog.
+// Prices are stored per token. Currency names the money the prices are in; DeepSeek bills in yuan, the catalog in US dollars.
 public sealed record TokenPrices(decimal Input, decimal Output, decimal? CacheRead, decimal? CacheWrite, decimal? CacheWriteHour);
 public sealed record PriceTier(long MinimumPromptTokens, TokenPrices Prices);
-public sealed record ModelPrice(string Model, TokenPrices Prices, IReadOnlyList<PriceTier> Tiers);
+public sealed record ModelPrice(string Model, TokenPrices Prices, IReadOnlyList<PriceTier> Tiers)
+{
+    public string Currency { get; init; } = "USD";
+    // DeepSeek's own prices depend on the hour of the request (see Pricing.IsPeak); this is the price outside peak hours.
+    public TokenPrices? OffPeakPrices { get; init; }
+}
 public enum RecoveryStatus { Recovered, TooFewRecords, Undetermined, Inconsistent }
 // Records is the number of records with an API amount; Needed is how many the fit requires.
 public sealed record PriceRecovery(RecoveryStatus Status, TokenPrices? Prices, int Records, int Needed);
 // Fitted counts the records priced from a merged Cursor plan's weekly amount (TokenEntry.FittedCost).
-public sealed record CostSummary(decimal Amount, int Reported, int Estimated, int Unpriced, int Fitted = 0)
+// Currency is the money every priced record shares; "MIX" when the records were priced in more than one, and ByCurrency
+// then holds each money's subtotal so the amounts are never added across monies.
+public sealed record CostSummary(decimal Amount, int Reported, int Estimated, int Unpriced, int Fitted = 0, string Currency = "USD",
+    IReadOnlyDictionary<string, decimal>? ByCurrency = null)
 {
     public bool HasValue => Reported + Estimated + Fitted > 0;
     public bool IsEstimate => Estimated > 0;
@@ -21,6 +29,18 @@ public sealed record CostSummary(decimal Amount, int Reported, int Estimated, in
 public sealed class Pricing : IDisposable
 {
     public const string Source = "https://openrouter.ai/api/v1/models";
+    // DeepSeek's own list prices, in yuan per token, from api-docs.deepseek.com/zh-cn/quick_start/pricing (read 2026-11-06):
+    // the peak-hour price, with the off-peak price at half. The catalog carries none of these IDs, so records of
+    // deepseek-flash and deepseek-v4-pro stay unpriced without them. The older deepseek-v4-flash name is billed as flash.
+    private static readonly ModelPrice[] BuiltIn =
+    [
+        new("deepseek-flash", new(0.000002m, 0.000008m, 0.00000004m, 0m, 0m), [])
+            { Currency = "CNY", OffPeakPrices = new(0.000001m, 0.000004m, 0.00000002m, 0m, 0m) },
+        new("deepseek-v4-flash", new(0.000002m, 0.000008m, 0.00000004m, 0m, 0m), [])
+            { Currency = "CNY", OffPeakPrices = new(0.000001m, 0.000004m, 0.00000002m, 0m, 0m) },
+        new("deepseek-v4-pro", new(0.000009m, 0.000027m, 0.0000003m, 0m, 0m), [])
+            { Currency = "CNY", OffPeakPrices = new(0.0000045m, 0.0000135m, 0.00000015m, 0m, 0m) },
+    ];
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromDays(1);
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
@@ -128,6 +148,8 @@ public sealed class Pricing : IDisposable
         }
         // Without saved prices, those models stay unpriced until the next update.
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException) { }
+        // The built-in DeepSeek prices are available before any download, offline and on a first start.
+        lock (_sync) RebuildLookup();
     }
 
     // The first call in each process fetches online only when the disk cache is a refresh interval old or missing. The official
@@ -367,6 +389,17 @@ public sealed class Pricing : IDisposable
         }
         foreach (var model in _official)
             if (!_manual.ContainsKey(model.Key) && !_manual.ContainsKey(Normalize(model.Value.Model[(model.Value.Model.IndexOf('/') + 1)..]))) merged[model.Key] = model.Value;
+        // DeepSeek's own yuan prices, which the catalog does not carry; a catalog or manual entry with the same ID wins.
+        // A catalog model with the same bare name (deepseek/deepseek-v4-pro) keeps its dollar price, so records that already
+        // had a catalog price are not moved into another money.
+        var bareNames = new HashSet<string>(merged.Values.Select(m => Normalize(m.Model[(m.Model.IndexOf('/') + 1)..])), StringComparer.OrdinalIgnoreCase);
+        // A model added by hand under its bare name keeps that name to itself, as a catalog entry does.
+        foreach (var model in _manual) bareNames.Add(Normalize(model.Value.Model[(model.Value.Model.IndexOf('/') + 1)..]));
+        foreach (var model in BuiltIn)
+        {
+            var key = Normalize(model.Model);
+            if (!merged.ContainsKey(key) && !bareNames.Contains(key)) merged[key] = model;
+        }
         foreach (var model in _manual) merged[model.Key] = model.Value;
         return merged;
     }
@@ -375,7 +408,8 @@ public sealed class Pricing : IDisposable
         (prices.CacheRead is null or >= 0 and <= 1000) && (prices.CacheWrite is null or >= 0 and <= 1000) &&
         (prices.CacheWriteHour is null or >= 0 and <= 1000);
     private static bool ValidModel(ModelPrice? model) => model is not null && !string.IsNullOrWhiteSpace(model.Model) &&
-        ValidPrices(model.Prices) && model.Tiers is not null && model.Tiers.All(t => t is not null && t.MinimumPromptTokens >= 0 && ValidPrices(t.Prices));
+        ValidPrices(model.Prices) && model.Tiers is not null && model.Tiers.All(t => t is not null && t.MinimumPromptTokens >= 0 && ValidPrices(t.Prices)) &&
+        model.Currency is "USD" or "CNY" && (model.OffPeakPrices is null || ValidPrices(model.OffPeakPrices));
 
     // Prices remain per-token internally; conversion from per-million happens only at the settings boundary.
     public bool TrySetManual(string model, TokenPrices prices, bool replaceExisting, out string? error)
@@ -392,9 +426,11 @@ public sealed class Pricing : IDisposable
             if (!replaceExisting && match is not null) { error = Loc.T("该模型已存在，请编辑现有模型。", "This model already exists. Edit the existing model instead."); return false; }
             if (replaceExisting && (match is null || Normalize(match.Model) != key))
             { error = Loc.T("模型已发生变化，请重新打开编辑窗口。", "The model has changed. Open the editor again."); return false; }
-            // A manual price is a flat price and is not silently superseded by remote context tiers.
+            // A manual price is a flat price and is not silently superseded by remote context tiers. Editing an existing
+            // model keeps the money its prices are in; a new model starts in dollars.
+            var currency = match?.Currency is { Length: > 0 } existing ? existing : "USD";
             var next = new Dictionary<string, ModelPrice>(_manual, StringComparer.OrdinalIgnoreCase)
-            { [key] = new(model, prices, []) };
+            { [key] = new(model, prices, []) { Currency = currency } };
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_manualFile)!);
@@ -444,15 +480,27 @@ public sealed class Pricing : IDisposable
         var write = prices.CacheWrite ?? prices.Input;
         return prices with { CacheRead = prices.CacheRead ?? 0, CacheWrite = write, CacheWriteHour = prices.CacheWriteHour ?? write };
     }
-    public decimal? Estimate(TokenEntry entry)
+    public decimal? Estimate(TokenEntry entry) => entry.ReportedCostUsd is { } reported ? reported : Estimate(entry, Match(entry));
+    private decimal? Estimate(TokenEntry entry, ModelPrice? model)
     {
         if (entry.ReportedCostUsd is { } reported) return reported;
-        if (Match(entry) is not { } model) return null;
+        if (model is null) return null;
         long prompt = entry.Input + entry.CacheRead + entry.CacheWrite + entry.CacheWriteHour;
-        var prices = Effective(model, model.Tiers.LastOrDefault(t => prompt >= t.MinimumPromptTokens)?.Prices ?? model.Prices);
+        var prices = model.OffPeakPrices is { } off && !IsPeak(entry.Time) ? off
+            : model.Tiers.LastOrDefault(t => prompt >= t.MinimumPromptTokens)?.Prices ?? model.Prices;
+        prices = Effective(model, prices);
         if ((entry.CacheRead > 0 && prices.CacheRead is null) || (entry.CacheWrite > 0 && prices.CacheWrite is null) || (entry.CacheWriteHour > 0 && prices.CacheWriteHour is null)) return null;
         return entry.Input * prices.Input + entry.Output * prices.Output + entry.CacheRead * (prices.CacheRead ?? 0) +
             entry.CacheWrite * (prices.CacheWrite ?? 0) + entry.CacheWriteHour * (prices.CacheWriteHour ?? 0);
+    }
+    // DeepSeek's peak hours: 9:00-12:00 and 14:00-18:00 Beijing time on weekdays. Its published table also skips Chinese
+    // public holidays; they are not known here, so a holiday within a weekday is billed at the peak price.
+    private static bool IsPeak(DateTimeOffset time)
+    {
+        var beijing = time.ToOffset(TimeSpan.FromHours(8));
+        if (beijing.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+        var at = beijing.TimeOfDay;
+        return at >= TimeSpan.FromHours(9) && at < TimeSpan.FromHours(12) || at >= TimeSpan.FromHours(14) && at < TimeSpan.FromHours(18);
     }
     // Cursor reports the amount of each record but not the unit prices behind it. The amount is the token counts
     // times fixed per-category prices, so a least-squares fit over a model's records recovers those prices. The fit is
@@ -508,14 +556,19 @@ public sealed class Pricing : IDisposable
     public CostSummary Summarize(IEnumerable<TokenEntry> entries)
     {
         decimal amount = 0; int reported = 0, estimated = 0, unpriced = 0, fitted = 0;
+        var currencies = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
         {
             if (string.IsNullOrWhiteSpace(entry.Model) && entry.Total == 0 && entry.ReportedCostUsd is null) continue;
-            if (Estimate(entry) is not { } price) { unpriced++; continue; }
+            var model = entry.ReportedCostUsd is null ? Match(entry) : null;
+            if (Estimate(entry, model) is not { } price) { unpriced++; continue; }
             amount += price;
+            var money = model?.Currency is { Length: > 0 } currency ? currency : "USD";
+            currencies[money] = currencies.GetValueOrDefault(money) + price;
             if (entry.FittedCost) fitted++; else if (entry.ReportedCostUsd is not null) reported++; else estimated++;
         }
-        return new(amount, reported, estimated, unpriced, fitted);
+        var single = currencies.Count switch { 0 => "USD", 1 => currencies.Keys.First(), _ => "MIX" };
+        return new(amount, reported, estimated, unpriced, fitted, single, currencies.Count > 1 ? currencies : null);
     }
     // Antigravity adds its own words to a model name: reasoning levels and other qualifiers, such as "claude-opus-5-5-high",
     // "claude-opus-4-6-thinking", "gpt-oss-120b-medium" (names seen in Antigravity records, confirmed by the user) and
