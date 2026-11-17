@@ -93,8 +93,9 @@ public sealed partial class SettingsWindow : Window, IKeepsAppFonts
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         if (S.SettingsWindowMaximized) WindowState = WindowState.Maximized;
         Closing += (_, _) => { if (!_app.Exiting) RememberSize(); };
+        // Text keeps WPF's default layout (Ideal), as the panel's does. Laid out on whole pixels (Display), the strokes of one
+        // character came out uneven and the gaps between characters unequal at 150% and above (issue #249).
         UseLayoutRounding = true; SnapsToDevicePixels = true;
-        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
         Native.SettingsChrome.Apply(this);
         SourceInitialized += (_, _) => Native.SettingsChrome.SetTheme(this, _palette.Dark);
         SystemEvents.UserPreferenceChanged += SystemThemeChanged;
