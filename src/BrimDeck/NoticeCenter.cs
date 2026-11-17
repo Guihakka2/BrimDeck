@@ -519,6 +519,30 @@ internal sealed class NoticeCenter : IDisposable
         Hub.Clear();
     }
 
+    public enum WindowsSyncStatus { Done, Off, NoAccess, Failed }
+
+    // The sync button of the notices page: the notices read from Windows' notification center are made to match what it holds
+    // now (NoticeHub.SyncWindows). Notices of every other source (taskbar flashes, brim-notify, WSL) are not touched.
+    public async Task<(WindowsSyncStatus Status, int Removed, int Added)> SyncWindowsAsync()
+    {
+        bool On() => _enabled && !_disposed && Settings.NoticeWindowsSource;
+        if (!On()) return (WindowsSyncStatus.Off, 0, 0);
+        IReadOnlyList<NoticeInput>? present;
+        try { present = await _windows.ReadCenterAsync(); }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or TimeoutException or InvalidOperationException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            Log(ex);
+            return (WindowsSyncStatus.Failed, 0, 0);
+        }
+        if (present is null) return (WindowsSyncStatus.NoAccess, 0, 0);
+        if (!On()) return (WindowsSyncStatus.Off, 0, 0);
+        var sorted = present.Select(input => NoticeTimeSources.Classify(input, TimeZoneInfo.Local)).ToList();
+        var (removed, added) = Hub.SyncWindows(sorted, DateTimeOffset.UtcNow);
+        // A deleted notice that shows or waits to show goes too, as with Delete.
+        foreach (var id in removed) Withdraw(id);
+        return (WindowsSyncStatus.Done, removed.Count, added);
+    }
+
     // A notice of BrimDeck's own, to try the look and the placement. It is never sent to Windows, so it cannot come back
     // through the notification list.
     public void SendTest()

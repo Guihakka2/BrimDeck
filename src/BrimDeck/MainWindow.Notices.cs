@@ -253,7 +253,51 @@ public partial class MainWindow
 
     // What the page shows besides its rows; a change of it builds the whole page again.
     private string NoticePageKey(NoticeCenter center) => string.Join('|', center.Paused, center.Quiet, center.Epoch, _noticeEarlier, _noticeUnread, FocusedNotice(center)?.Id,
-        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_freshNotices), Loc.Language, center.WindowsState, DateTime.Today);
+        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_freshNotices), Loc.Language, center.WindowsState, DateTime.Today, _noticeSyncSaid);
+
+    // The sync button's state: what the page says in place of the day's count while it syncs and for a few seconds after.
+    private string? _noticeSyncSaid;
+    private bool _noticeSyncing;
+    private System.Windows.Threading.DispatcherTimer? _noticeSyncTimer;
+    private static readonly TimeSpan NoticeSyncSaidFor = TimeSpan.FromSeconds(4);
+
+    // Makes the notices from Windows' notification center match it: those gone from it are deleted, those missing are added.
+    // Notices of other sources stay (NoticeCenter.SyncWindowsAsync).
+    private async Task SyncWindowsNotices()
+    {
+        if (_noticeSyncing || _app.Notices is not { } center) return;
+        _noticeSyncing = true;
+        _noticeSyncTimer?.Stop();
+        ShowNoticeSync(Loc.T("正在同步 Windows 通知…", "Syncing Windows notifications…"));
+        try
+        {
+            var (status, removed, added) = await center.SyncWindowsAsync();
+            ShowNoticeSync(status switch
+            {
+                NoticeCenter.WindowsSyncStatus.Done when removed == 0 && added == 0 => Loc.T("已与 Windows 通知一致", "Already matches Windows notifications"),
+                NoticeCenter.WindowsSyncStatus.Done => Loc.T($"已同步：删除 {removed} 条，补充 {added} 条", $"Synced: {removed} removed, {added} added"),
+                NoticeCenter.WindowsSyncStatus.NoAccess => Loc.T("未获得读取 Windows 通知的权限", "No access to Windows notifications"),
+                NoticeCenter.WindowsSyncStatus.Off => Loc.T("未接收 Windows 应用通知", "Not receiving Windows notifications"),
+                _ => Loc.T("同步失败，请稍后再试", "Sync failed; try again later")
+            });
+        }
+        finally { _noticeSyncing = false; }
+        _noticeSyncTimer ??= new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Normal, Dispatcher) { Interval = NoticeSyncSaidFor };
+        _noticeSyncTimer.Tick -= NoticeSyncSaidEnded; _noticeSyncTimer.Tick += NoticeSyncSaidEnded;
+        _noticeSyncTimer.Start();
+    }
+
+    private void NoticeSyncSaidEnded(object? sender, EventArgs e)
+    {
+        _noticeSyncTimer?.Stop();
+        ShowNoticeSync(null);
+    }
+
+    private void ShowNoticeSync(string? said)
+    {
+        _noticeSyncSaid = said;
+        if (_expanded && CurrentPage == DeckPage.Notices) RenderNotices();
+    }
 
     // What the page's frame was built for: the settings (each change replaces them), its size and the theme.
     private (DeckSettings? Settings, int Theme, double Width, double Height, double UsageWidth) NoticeLayout()
@@ -621,10 +665,13 @@ public partial class MainWindow
         string count = Loc.T($"今天 {today} 条", $"{today} today");
         if (center.Paused && center.Settings.NoticesPausedUntil is { } until) count += Loc.T($" · 暂停至 {until.ToLocalTime():HH:mm}", $" · paused until {until.ToLocalTime():HH:mm}");
         else if (center.Quiet) count += Loc.T(" · 安静中", " · quiet");
+        if (_noticeSyncSaid is { } said) count = said;
         var countText = UI.Centered(count, 11.5, UI.Tertiary);
         countText.TextWrapping = TextWrapping.Wrap; countText.LineHeight = NoticeLines.CountLine; countText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
         head.Children.Add(countText);
         var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (center.WindowsState != NoticeSourceState.Off)
+            tools.Children.Add(IconToggle("", Loc.T("同步 Windows 通知", "Sync Windows notifications"), () => _ = SyncWindowsNotices()));
         var pause = IconToggle(center.Paused ? "" : "", center.Paused ? Loc.T("恢复提醒", "Resume") : Loc.T("暂停提醒 1 小时", "Pause for 1 h"),
             () => { center.Pause(center.Paused ? null : TimeSpan.FromHours(1)); RenderNotices(); });
         tools.Children.Add(pause);
@@ -721,11 +768,14 @@ public partial class MainWindow
             NoticeSourceState.Off => (Loc.T("未接收 Windows 应用通知", "Not receiving Windows notifications"), UI.Tertiary),
             _ => (Loc.T("正在接收 Windows 应用通知", "Receiving Windows notifications"), CallColor)
         };
+        if (_noticeSyncSaid is { } said) state = said;
         var status = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 14, 0, 0) };
         status.Children.Add(new Ellipse { Width = 6, Height = 6, Fill = UI.Brush(color), Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
         status.Children.Add(UI.Fixed(state, 11.5, 16, UI.Tertiary));
         empty.Children.Add(status);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 18, 0, 0) };
+        if (center.WindowsState != NoticeSourceState.Off)
+            buttons.Children.Add(PillButton(Loc.T("同步 Windows 通知", "Sync Windows notifications"), Loc.T("同步 Windows 通知", "Sync Windows notifications"), () => _ = SyncWindowsNotices()));
         buttons.Children.Add(PillButton(Loc.T("通知设置", "Notice settings"), Loc.T("通知设置", "Notice settings"), () => _app.OpenSettings()));
         empty.Children.Add(buttons);
         return empty;

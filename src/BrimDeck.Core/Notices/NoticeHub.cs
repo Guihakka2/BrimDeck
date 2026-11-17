@@ -295,6 +295,65 @@ public sealed class NoticeHub
         _notices.Clear(); _byId.Clear(); Recount(); Changed?.Invoke(); Persist?.Invoke(false);
     }
 
+    // Whether a notice was read from Windows' notification center (WindowsNoticeSource), as opposed to a taskbar flash (also of
+    // Windows origin, "flash:"), brim-notify, WSL or a test notice.
+    public static bool FromWindowsCenter(Notice notice) => notice.Origin == NoticeOrigin.Windows && notice.InstanceKey.StartsWith(WindowsCenterPrefix, StringComparison.Ordinal);
+    private const string WindowsCenterPrefix = "windows:";
+
+    // Makes the notices read from Windows' notification center match what the center holds now (the sync button of the notices
+    // page): those no longer there are deleted, those there but not listed are added without being shown as they arrive. present
+    // is the center as just read, sorted (NoticeTimeSources.Classify) as the source's notices are. Every other notice stays as it
+    // is. Returns the ids of the deleted notices and how many were added.
+    public (IReadOnlyList<string> Removed, int Added) SyncWindows(IReadOnlyCollection<NoticeInput> present, DateTimeOffset now)
+    {
+        var keys = present.Where(input => input.Origin == NoticeOrigin.Windows && input.InstanceKey.StartsWith(WindowsCenterPrefix, StringComparison.Ordinal))
+            .GroupBy(input => input.InstanceKey, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var removed = new List<string>();
+        bool changed = false;
+        foreach (var notice in _notices.Where(FromWindowsCenter).ToList())
+        {
+            if (keys.Remove(notice.InstanceKey))
+            {
+                // Still in the center: one kept from before a restart reads as present again.
+                if (!notice.SourcePresent) { notice.SourcePresent = true; notice.Revision++; changed = true; }
+                continue;
+            }
+            if (_trackRemovals) _deleted.Add(notice.Id);
+            _notices.Remove(notice); _byId.Remove(notice.Id);
+            removed.Add(notice.Id);
+        }
+        int added = 0;
+        foreach (var input in keys.Values)
+        {
+            if (_rule(input.AppKey) is { Enabled: false }) continue;
+            RememberApp(input, now);
+            var (title, body) = Words(input);
+            var rule = _rule(input.AppKey);
+            var created = input.CreatedAt is { } at && at < now ? at : now;
+            var notice = new Notice
+            {
+                InstanceKey = input.InstanceKey, AppKey = input.AppKey, AppName = input.AppName, AppId = input.AppId, Origin = input.Origin,
+                Title = title, Body = body, IconRef = input.IconRef, Picture = input.Picture,
+                // Listed by when Windows received it, among the others; kept for the retention from now, as a notice just received is.
+                CreatedAt = created, ReceivedAt = created, UpdatedAt = now, Category = input.Category,
+                Priority = input.Call ? AlertPriority(rule, input.PriorityHint) : EffectivePriority(rule, input.PriorityHint),
+                Progress = input.Progress, Actions = [.. input.Actions], Capabilities = input.Capabilities, Timing = input.Timing?.Copy(), Call = input.Call,
+                Transient = input.Transient
+            };
+            _notices.Add(notice); _byId[notice.Id] = notice;
+            added++;
+        }
+        if (removed.Count == 0 && added == 0 && !changed) return (removed, 0);
+        if (added > 0)
+        {
+            var ordered = _notices.OrderByDescending(n => n.ReceivedAt).ToList();
+            _notices.Clear(); _notices.AddRange(ordered);
+            Prune(now, notify: false);
+        }
+        Recount(); Changed?.Invoke(); Persist?.Invoke(false);
+        return (removed, added);
+    }
+
     // The scheduled clearing: everything but a reminder still to come and a stopwatch still running, which would otherwise be
     // lost without a word (core-L2).
     public void ClearDone(DateTimeOffset now)
