@@ -1120,6 +1120,12 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         try
         {
             foreach (var frame in way.Before) { Send(frame); Thread.Sleep(way.GapMs); }
+            if (way.Transport == WayTransport.Converse)
+            {
+                if (way.Converse is not { } converse) return null;
+                device.Flush();
+                return converse(new Exchange(info.Path, device));
+            }
             // The gate the same way as the request: a feature read's gate is set and got back as a feature report.
             if (way.Gate is { Length: > 0 } gate && way.Gated is { } gated)
             {
@@ -1146,6 +1152,14 @@ internal sealed class HidBatteries(Dispatcher dispatcher, Action<DeviceSource, I
         {
             foreach (var frame in way.After) try { Send(frame); } catch (Exception error) when (error is System.ComponentModel.Win32Exception or TimeoutException or IOException) { }
         }
+    }
+
+    // A collection as a Converse read talks to it.
+    private sealed class Exchange(string key, HidDevice device) : IHidExchange
+    {
+        public string Key => key;
+        public void Write(byte[] report) => device.Write(report);
+        public byte[]? Read(int timeoutMs) => device.Read(Math.Max(1, timeoutMs));
     }
 
     // MCHOSE on its own vendor id 0x3837: the reads Dongles.MchoseReads gives the collection (by its shape and the report ids it

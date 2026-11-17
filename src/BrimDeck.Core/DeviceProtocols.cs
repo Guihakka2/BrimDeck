@@ -554,6 +554,10 @@ public static class Dongles
         (0x3554, 0xF545), (0x3554, 0xF566), (0x3554, 0xF546), (0x3554, 0xFB26), (0x3554, 0xFB23), (0x3554, 0xFB25), (0x260D, 0x1108),
         (0x260D, 0x1114), (0x260D, 0x1115), (0x260D, 0x1135), (0x260D, 0x1156), (0x260D, 0x1163), (0x260D, 0x1219), (0x260D, 0x1227),
         (0x260D, 0x1238), (0x260D, 0x1246), (0x260D, 0x1257), (0x260D, 0x1258), (0x260D, 0x1261), (0x260D, 0x1288), (0x260D, 0x1333),
+        // GravaStar (重力星球): GS HUB (support.gravastar.com) opens its Mercury mice on 0xFF02 / 2 with report 8 and this frame,
+        // and sends M1, M2, X, X Air and X Pro to Compx's Control HUB (controlhub.top/gravastar), whose cfg.json lists receivers
+        // F54B, F575, F548, F577 and cables F576, F549 (F577 is the one GS HUB names no model for; the X Air's, unconfirmed).
+        (0x3554, 0xF54B), (0x3554, 0xF575), (0x3554, 0xF548), (0x3554, 0xF577), (0x3554, 0xF576), (0x3554, 0xF549),
     ];
     private static readonly HashSet<(int, int)> CompxOfficialSet = [.. CompxOfficial];
     public static bool IsCompxOfficial(int vendor, int product) => CompxOfficialSet.Contains((vendor, product));
