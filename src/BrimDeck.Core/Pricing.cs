@@ -17,8 +17,10 @@ public enum RecoveryStatus { Recovered, TooFewRecords, Undetermined, Inconsisten
 // Records is the number of records with an API amount; Needed is how many the fit requires.
 public sealed record PriceRecovery(RecoveryStatus Status, TokenPrices? Prices, int Records, int Needed);
 // Fitted counts the records priced from a merged Cursor plan's weekly amount (TokenEntry.FittedCost).
-// Currency is the money every priced record shares; "MIX" when the records were priced in more than one.
-public sealed record CostSummary(decimal Amount, int Reported, int Estimated, int Unpriced, int Fitted = 0, string Currency = "USD")
+// Currency is the money every priced record shares; "MIX" when the records were priced in more than one, and ByCurrency
+// then holds each money's subtotal so the amounts are never added across monies.
+public sealed record CostSummary(decimal Amount, int Reported, int Estimated, int Unpriced, int Fitted = 0, string Currency = "USD",
+    IReadOnlyDictionary<string, decimal>? ByCurrency = null)
 {
     public bool HasValue => Reported + Estimated + Fitted > 0;
     public bool IsEstimate => Estimated > 0;
@@ -391,6 +393,8 @@ public sealed class Pricing : IDisposable
         // A catalog model with the same bare name (deepseek/deepseek-v4-pro) keeps its dollar price, so records that already
         // had a catalog price are not moved into another money.
         var bareNames = new HashSet<string>(merged.Values.Select(m => Normalize(m.Model[(m.Model.IndexOf('/') + 1)..])), StringComparer.OrdinalIgnoreCase);
+        // A model added by hand under its bare name keeps that name to itself, as a catalog entry does.
+        foreach (var model in _manual) bareNames.Add(Normalize(model.Value.Model[(model.Value.Model.IndexOf('/') + 1)..]));
         foreach (var model in BuiltIn)
         {
             var key = Normalize(model.Model);
@@ -422,9 +426,11 @@ public sealed class Pricing : IDisposable
             if (!replaceExisting && match is not null) { error = Loc.T("该模型已存在，请编辑现有模型。", "This model already exists. Edit the existing model instead."); return false; }
             if (replaceExisting && (match is null || Normalize(match.Model) != key))
             { error = Loc.T("模型已发生变化，请重新打开编辑窗口。", "The model has changed. Open the editor again."); return false; }
-            // A manual price is a flat price and is not silently superseded by remote context tiers.
+            // A manual price is a flat price and is not silently superseded by remote context tiers. Editing an existing
+            // model keeps the money its prices are in; a new model starts in dollars.
+            var currency = match?.Currency is { Length: > 0 } existing ? existing : "USD";
             var next = new Dictionary<string, ModelPrice>(_manual, StringComparer.OrdinalIgnoreCase)
-            { [key] = new(model, prices, []) };
+            { [key] = new(model, prices, []) { Currency = currency } };
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_manualFile)!);
@@ -550,18 +556,19 @@ public sealed class Pricing : IDisposable
     public CostSummary Summarize(IEnumerable<TokenEntry> entries)
     {
         decimal amount = 0; int reported = 0, estimated = 0, unpriced = 0, fitted = 0;
-        var currencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var currencies = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
         {
             if (string.IsNullOrWhiteSpace(entry.Model) && entry.Total == 0 && entry.ReportedCostUsd is null) continue;
             var model = entry.ReportedCostUsd is null ? Match(entry) : null;
             if (Estimate(entry, model) is not { } price) { unpriced++; continue; }
             amount += price;
-            currencies.Add(model?.Currency is { Length: > 0 } currency ? currency : "USD");
+            var money = model?.Currency is { Length: > 0 } currency ? currency : "USD";
+            currencies[money] = currencies.GetValueOrDefault(money) + price;
             if (entry.FittedCost) fitted++; else if (entry.ReportedCostUsd is not null) reported++; else estimated++;
         }
-        var money = currencies.Count switch { 0 => "USD", 1 => currencies.First(), _ => "MIX" };
-        return new(amount, reported, estimated, unpriced, fitted, money);
+        var single = currencies.Count switch { 0 => "USD", 1 => currencies.Keys.First(), _ => "MIX" };
+        return new(amount, reported, estimated, unpriced, fitted, single, currencies.Count > 1 ? currencies : null);
     }
     // Antigravity adds its own words to a model name: reasoning levels and other qualifiers, such as "claude-opus-5-5-high",
     // "claude-opus-4-6-thinking", "gpt-oss-120b-medium" (names seen in Antigravity records, confirmed by the user) and

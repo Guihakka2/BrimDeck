@@ -148,6 +148,15 @@ try
     Check("DeepSeek's yuan prices are built in, at the peak-hour price", pricing.Find("deepseek-flash") is { Currency: "CNY" } && pricing.Estimate(peakEntry) == 10.04m);
     Check("A DeepSeek record outside peak hours takes the off-peak price", pricing.Estimate(offPeakEntry) == 5.02m);
     Check("A cost summary names the yuan the DeepSeek prices are in", pricing.Summarize([peakEntry]) is { Currency: "CNY" } summary && summary.Amount == 10.04m);
+    var usdEntry = new TokenEntry("dsh:usd", DateTimeOffset.Parse("2026-11-04T02:00:00Z"), "anthropic/claude-sonnet-4.5", 1_000_000, 0, 0, 0, 0);
+    Check("A summary mixing yuan and dollars keeps each money's subtotal apart",
+        pricing.Summarize([peakEntry, usdEntry]) is { Currency: "MIX", ByCurrency: { Count: 2 } byCurrency } &&
+        byCurrency["CNY"] == 10.04m && byCurrency["USD"] == 3m);
+    using (var edit = new Pricing(Path.Combine(root, "cny-edit"), priceClient, () => priceTime))
+    {
+        Check("Editing a yuan-priced model keeps its money",
+            edit.TrySetManual("deepseek-flash", new(.000003m, .000008m, 0, 0, 0), true, out _) && edit.Find("deepseek-flash") is { Currency: "CNY" });
+    }
     using (var cached = new Pricing(priceDirectory, priceClient, () => priceTime))
     {
         Check("Downloaded catalog survives restart", cached.ModelCount >= 4 && cached.UpdatedAt == pricing.UpdatedAt);

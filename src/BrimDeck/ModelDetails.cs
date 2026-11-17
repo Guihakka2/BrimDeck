@@ -356,7 +356,8 @@ public partial class MainWindow
                     header || total ? Look.Tertiary : i == 2 ? Look.Primary : Look.Secondary,
                     i == 2 && !total && !header ? FontWeights.SemiBold : FontWeights.Normal);
                 text.TextAlignment = i >= 1 ? TextAlignment.Right : TextAlignment.Left;
-                Grid.SetColumn(text, i * 2); row.Children.Add(text);
+                // Four columns: app, date, the gap, and the share; the gap holds no text.
+                Grid.SetColumn(text, i switch { 0 => 0, 1 => 1, _ => 3 }); row.Children.Add(text);
             }
             return row;
         }

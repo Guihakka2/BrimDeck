@@ -65,8 +65,9 @@ public sealed class UsageService(IDesktopSources desktop, DataLocations? locatio
     private bool _includeWsl;
     // Whether the daily shares of the Grok Bot allowance are shown as its usage statistics in this refresh.
     private bool _grokBotSharesWanted;
-    // The last daily shares of the Grok Bot allowance read online, shown with a kept reading when a later read fails.
-    private (List<UsageShare> Shares, DateTimeOffset? Start, DateTimeOffset? End)? _grokBotShares;
+    // The last daily shares of the Grok Bot allowance read online, for the account they were read for, shown with a kept
+    // reading when a later read fails.
+    private (string Account, List<UsageShare> Shares, DateTimeOffset? Start, DateTimeOffset? End)? _grokBotShares;
     private readonly AntigravityUsage _antigravity = new();
     private readonly DshSessions _dsh = new();
     private readonly KimiSessions _kimi = new();
@@ -794,9 +795,15 @@ public sealed class UsageService(IDesktopSources desktop, DataLocations? locatio
                 snapshot.PlanSource = reading.Plan.Length > 0 ? Loc.T("Grok Bot 账户", "Grok Bot account") : "";
                 if (_grokBotSharesWanted)
                 {
-                    var (shares, shareStart, shareEnd) = await ReadGrokBotSharesAsync(signIn.Token, ct);
-                    snapshot.Shares = shares; snapshot.SharePeriodStart = shareStart; snapshot.SharePeriodEnd = shareEnd;
-                    if (shares.Count > 0) _grokBotShares = (shares, shareStart, shareEnd);
+                    var account = GrokBotAccount(signIn.Token);
+                    var (shares, shareStart, shareEnd, read) = await ReadGrokBotSharesAsync(signIn.Token, ct);
+                    if (read)
+                    {
+                        snapshot.Shares = shares; snapshot.SharePeriodStart = shareStart; snapshot.SharePeriodEnd = shareEnd;
+                        _grokBotShares = (account, shares, shareStart, shareEnd);
+                    }
+                    else if (_grokBotShares is { } keptShares && keptShares.Account == account)
+                    { snapshot.Shares = keptShares.Shares; snapshot.SharePeriodStart = keptShares.Start; snapshot.SharePeriodEnd = keptShares.End; }
                 }
                 Connected(snapshot, Loc.T("Grok Bot 账户 · 每周额度", "Grok Bot account · weekly allowance"), now);
                 if (reading.UsedPercent is null) snapshot.Status += PooledNote;
@@ -818,7 +825,8 @@ public sealed class UsageService(IDesktopSources desktop, DataLocations? locatio
         }
         if (GrokBotFreshest(now) is { } kept)
         {
-            if (_grokBotShares is { } shares)
+            // Only the shares read for the account signed in now; a sign-in that could not be read keeps none.
+            if (signIn.Token.Length > 0 && _grokBotShares is { } shares && shares.Account == GrokBotAccount(signIn.Token))
             { snapshot.Shares = shares.Shares; snapshot.SharePeriodStart = shares.Start; snapshot.SharePeriodEnd = shares.End; }
             RetainGrokBot(snapshot, kept, failure, now); return;
         }
@@ -828,8 +836,9 @@ public sealed class UsageService(IDesktopSources desktop, DataLocations? locatio
     }
 
     // The daily shares of the weekly allowance, from GetGrokBotUsageBreakdown. A failure here leaves the quota reading as
-    // it is: the shares are statistics, and their absence only leaves the totals of the row empty.
-    private async Task<(List<UsageShare> Shares, DateTimeOffset? Start, DateTimeOffset? End)> ReadGrokBotSharesAsync(string token, CancellationToken ct)
+    // it is: the shares are statistics, and their absence only leaves the totals of the row empty. Read is false when the
+    // request failed, so an empty answer from the service is not mistaken for a failure.
+    private async Task<(List<UsageShare> Shares, DateTimeOffset? Start, DateTimeOffset? End, bool Read)> ReadGrokBotSharesAsync(string token, CancellationToken ct)
     {
         try
         {
@@ -838,12 +847,15 @@ public sealed class UsageService(IDesktopSources desktop, DataLocations? locatio
             request.Content = JsonBody(new { });
             using var doc = await SendAsync(_http, request, ct);
             var (start, end) = GrokBotUsage.BreakdownPeriod(doc.RootElement);
-            return (GrokBotUsage.Breakdown(doc.RootElement), start, end);
+            return (GrokBotUsage.Breakdown(doc.RootElement), start, end, true);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested && ex is
             HttpRequestException or OperationCanceledException or IOException or InvalidDataException or JsonException or FormatException)
-        { return ([], null, null); }
+        { return ([], null, null, false); }
     }
+
+    // The account a Grok Bot sign-in belongs to, without keeping the token itself.
+    private static string GrokBotAccount(string token) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(token)))[..16];
 
     // The desktop app's cached reading, ignored when it claims a time well in the future.
     private GrokBotReading? ReadGrokBotCache(DateTimeOffset now)
