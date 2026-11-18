@@ -126,6 +126,25 @@ internal static class AppUpdateTests
             betas.NoticeVersion is null && new AppUpdates(betaBackend, betaFolder).NoticeVersion is null);
         betas.Beta = true; await betas.CheckAsync(true); await betas.DownloadAsync(); betas.Beta = false;
         check("a downloaded beta stays ready when betas are turned off", betas.Stage == AppUpdateStage.Ready && betas.Release?.Version == "0.2.0-beta.1");
+
+        foreach (var version in new[] { "0.2.0-beta.1", "0.2.0" })
+        {
+            var result = new TaskCompletionSource<AppRelease?>();
+            var checkingBackend = new UpdateFixture { CheckResult = result.Task };
+            var checkingFolder = Path.Combine(folder, "beta-toggle-" + version);
+            var checking = new AppUpdates(checkingBackend, checkingFolder) { Beta = true };
+            var pending = checking.CheckAsync(true);
+            checking.Beta = false;
+            result.SetResult(new(version, "Update notes", 100)); await pending;
+            var restored = new AppUpdates(checkingBackend, checkingFolder);
+            if (version == "0.2.0-beta.1")
+                check("turning betas off during a check withdraws its beta and remembered notice", !checking.HasUpdate &&
+                    checking.Stage == AppUpdateStage.Idle && !checking.ShouldPrompt(true, true) &&
+                    checking.NoticeVersion is null && restored.NoticeVersion is null);
+            else
+                check("turning betas off during a check keeps its stable release and remembered notice", checking.Release?.Version == "0.2.0" &&
+                    checking.Stage == AppUpdateStage.Available && checking.ShouldPrompt(true, true) && restored.NoticeVersion == "0.2.0");
+        }
     }
 }
 

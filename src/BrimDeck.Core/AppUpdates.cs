@@ -214,6 +214,7 @@ public sealed class AppUpdates
         {
             var release = await _backend.CheckAsync(Beta, cancellation);
             cancellation.ThrowIfCancellationRequested();
+            if (!Beta && ApplicationVersion.IsPrerelease(release?.Version)) release = null;
             Release = release; LastChecked = _clock();
             _failures = 0; _lastFailure = null; _retryUntil = null;
             _state.LastSuccess = LastChecked; _state.AvailableVersion = release?.Version; SaveState();
